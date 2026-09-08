@@ -1,0 +1,17 @@
+fullnameOverride: user-service-postgresql
+
+architecture: standalone
+
+auth:
+  username: app_user
+  database: users
+  existingSecret: user-service-db-secret
+
+  secretKeys:
+    adminPasswordKey: postgres-password
+    userPasswordKey: password
+
+primary:
+  persistence:
+    enabled: true
+    size: 1Gi

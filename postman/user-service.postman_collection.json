@@ -1,0 +1,222 @@
+{
+  "info": {
+    "_postman_id": "0a79c796-ef79-4fb6-9f00-cd06eb726ce9",
+    "name": "User Service CRUD",
+    "description": "CRUD collection for OTUS user-service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://arch.homework"
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "runId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Create user",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set(\"runId\", Date.now().toString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test(\"Created user is returned\", function () {",
+              "    const response = pm.response.json();",
+              "    const runId = pm.collectionVariables.get(\"runId\");",
+              "",
+              "    pm.expect(response.id).to.be.a(\"number\");",
+              "    pm.expect(response.username).to.eql(\"otus-user-\" + runId);",
+              "    pm.expect(response.firstName).to.eql(\"Otus\");",
+              "    pm.expect(response.lastName).to.eql(\"Student\");",
+              "    pm.expect(response.email).to.eql(\"otus-user-\" + runId + \"@example.com\");",
+              "    pm.expect(response.phone).to.eql(\"+79990000001\");",
+              "",
+              "    pm.collectionVariables.set(\"userId\", response.id.toString());",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"otus-user-{{runId}}\",\n  \"firstName\": \"Otus\",\n  \"lastName\": \"Student\",\n  \"email\": \"otus-user-{{runId}}@example.com\",\n  \"phone\": \"+79990000001\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get user",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Created user is returned\", function () {",
+              "    const response = pm.response.json();",
+              "    const userId = Number(pm.collectionVariables.get(\"userId\"));",
+              "    const runId = pm.collectionVariables.get(\"runId\");",
+              "",
+              "    pm.expect(response.id).to.eql(userId);",
+              "    pm.expect(response.username).to.eql(\"otus-user-\" + runId);",
+              "    pm.expect(response.firstName).to.eql(\"Otus\");",
+              "    pm.expect(response.lastName).to.eql(\"Student\");",
+              "    pm.expect(response.email).to.eql(\"otus-user-\" + runId + \"@example.com\");",
+              "    pm.expect(response.phone).to.eql(\"+79990000001\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update user",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"User is updated\", function () {",
+              "    const response = pm.response.json();",
+              "    const userId = Number(pm.collectionVariables.get(\"userId\"));",
+              "    const runId = pm.collectionVariables.get(\"runId\");",
+              "",
+              "    pm.expect(response.id).to.eql(userId);",
+              "    pm.expect(response.username).to.eql(\"otus-user-\" + runId);",
+              "    pm.expect(response.firstName).to.eql(\"Otus Updated\");",
+              "    pm.expect(response.lastName).to.eql(\"Student Updated\");",
+              "    pm.expect(response.email).to.eql(\"otus-user-updated-\" + runId + \"@example.com\");",
+              "    pm.expect(response.phone).to.eql(\"+79990000002\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"otus-user-{{runId}}\",\n  \"firstName\": \"Otus Updated\",\n  \"lastName\": \"Student Updated\",\n  \"email\": \"otus-user-updated-{{runId}}@example.com\",\n  \"phone\": \"+79990000002\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Delete user",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 204\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: user-service-migration
+spec:
+  backoffLimit: 3
+
+  template:
+    metadata:
+      labels:
+        app: user-service-migration
+
+    spec:
+      restartPolicy: Never
+
+      containers:
+        - name: migration
+          image: postgres:16-alpine
+
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME"; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+
+              PGPASSWORD="$DB_PASSWORD" \
+              psql \
+                -v ON_ERROR_STOP=1 \
+                -h "$DB_HOST" \
+                -p "$DB_PORT" \
+                -U "$DB_USERNAME" \
+                -d "$DB_NAME" \
+                -f /migration/V1__create_users.sql
+
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: user-service-config
+                  key: DB_HOST
+
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: user-service-config
+                  key: DB_PORT
+
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: user-service-config
+                  key: DB_NAME
+
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: user-service-db-secret
+                  key: DB_USERNAME
+
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-service-db-secret
+                  key: DB_PASSWORD
+
+          volumeMounts:
+            - name: migration
+              mountPath: /migration
+              readOnly: true
+
+      volumes:
+        - name: migration
+          configMap:
+            name: user-service-migration

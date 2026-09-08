@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-migration
+data:
+  V1__create_users.sql: |
+    CREATE TABLE users
+    (
+        id         BIGSERIAL PRIMARY KEY,
+        username   VARCHAR(100) NOT NULL,
+        first_name VARCHAR(100) NOT NULL,
+        last_name  VARCHAR(100) NOT NULL,
+        email      VARCHAR(255) NOT NULL,
+        phone      VARCHAR(50),
+
+        CONSTRAINT uk_users_username UNIQUE (username),
+        CONSTRAINT uk_users_email UNIQUE (email)
+    );
