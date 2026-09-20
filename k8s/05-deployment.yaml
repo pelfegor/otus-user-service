@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: user-service
-          image: pelfegor/user-service:1.0.0
+          image: pelfegor/user-service:1.1.0
 
           ports:
             - containerPort: 8000

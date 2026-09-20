@@ -10,3 +10,19 @@ spring:
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true

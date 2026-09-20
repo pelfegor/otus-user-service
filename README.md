@@ -1,8 +1,8 @@
 # User Service
 
-RESTful CRUD-сервис для управления пользователями.
+RESTful CRUD-сервис для управления пользователями, развернутый в Kubernetes с PostgreSQL, мониторингом через Prometheus и визуализацией метрик в Grafana.
 
-Проект выполнен в рамках домашнего задания OTUS «Инфраструктурные паттерны».
+Проект выполнен в рамках домашних заданий OTUS по микросервисной архитектуре.
 
 ## Функциональность
 
@@ -16,59 +16,76 @@ RESTful CRUD-сервис для управления пользователям
 | PUT | `/users/{id}` | Обновить пользователя |
 | DELETE | `/users/{id}` | Удалить пользователя |
 | GET | `/health/` | Проверка состояния сервиса |
+| GET | `/actuator/prometheus` | Метрики приложения для Prometheus |
 
 ## Стек
 
 - Java 21
 - Spring Boot 3.5
 - Spring Data JDBC
+- Spring Boot Actuator
+- Micrometer
 - PostgreSQL
 - Gradle
 - Docker
 - Kubernetes
 - Helm
 - NGINX Ingress Controller
+- Prometheus
+- Grafana
 - Postman / Newman
 
-## Структура Kubernetes
-
-Приложение разворачивается по следующей схеме:
+## Архитектура
 
 ```text
-                        ┌──────────────────┐
-                        │  arch.homework   │
-                        └────────┬─────────┘
-                                 │
-                                 ▼
-                        ┌──────────────────┐
-                        │  NGINX Ingress   │
-                        └────────┬─────────┘
-                                 │
-                                 ▼
-                        ┌──────────────────┐
-                        │     Service      │
-                        │      :8000       │
-                        └────────┬─────────┘
-                                 │
-                    ┌────────────┴────────────┐
-                    ▼                         ▼
-             ┌─────────────┐           ┌─────────────┐
-             │ User Service│           │ User Service│
-             │    Pod 1    │           │    Pod 2    │
-             └──────┬──────┘           └──────┬──────┘
-                    │                         │
-                    └────────────┬────────────┘
-                                 ▼
-                        ┌──────────────────┐
-                        │    PostgreSQL    │
-                        └──────────────────┘
+                              ┌──────────────────┐
+                              │  arch.homework   │
+                              └────────┬─────────┘
+                                       │
+                                       ▼
+                              ┌──────────────────┐
+                              │  NGINX Ingress   │
+                              └────────┬─────────┘
+                                       │
+                                       ▼
+                              ┌──────────────────┐
+                              │     Service      │
+                              │      :8000       │
+                              └────────┬─────────┘
+                                       │
+                          ┌────────────┴────────────┐
+                          ▼                         ▼
+                   ┌─────────────┐           ┌─────────────┐
+                   │ User Service│           │ User Service│
+                   │    Pod 1    │           │    Pod 2    │
+                   └──────┬──────┘           └──────┬──────┘
+                          │                         │
+                          └────────────┬────────────┘
+                                       ▼
+                              ┌──────────────────┐
+                              │    PostgreSQL    │
+                              └──────────────────┘
+
+
+                   ┌───────────────────────────────┐
+                   │          Monitoring           │
+                   │                               │
+User Service ─────►│ Prometheus ─────► Grafana    │
+NGINX Ingress ────►│                               │
+                   └───────────────────────────────┘
 ```
 
-Конфигурация приложения хранится в `ConfigMap`.
+Конфигурация приложения хранится в Kubernetes `ConfigMap`.
 
 Данные для подключения к PostgreSQL хранятся в Kubernetes `Secret`.
 
 Первоначальная миграция базы данных выполняется отдельным Kubernetes `Job`.
+
+Метрики User Service и NGINX Ingress собираются Prometheus и отображаются в Grafana.
+
+---
+
+# Запуск приложения
 
 ## Требования
 
@@ -96,24 +113,31 @@ kubectl get nodes
 
 ## 2. NGINX Ingress Controller
 
-В кластере должен быть установлен NGINX Ingress Controller.
-
-Пример установки через Helm:
+Добавить Helm-репозиторий:
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
-
-helm install nginx-ingress ingress-nginx/ingress-nginx \
-  --namespace m \
-  --create-namespace
 ```
 
-Проверка:
+Установить NGINX Ingress Controller:
+
+```bash
+helm install nginx ingress-nginx/ingress-nginx \
+  --namespace m \
+  --create-namespace \
+  --set controller.metrics.enabled=true \
+  --set controller.metrics.service.enabled=true
+```
+
+Проверить:
 
 ```bash
 kubectl get pods -n m
+kubectl get svc -n m
 ```
+
+Для сбора метрик NGINX Ingress Controller должен предоставлять metrics endpoint на порту `10254`.
 
 ## 3. Установка PostgreSQL
 
@@ -124,7 +148,7 @@ helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
 ```
 
-Сначала создать Secret с данными подключения:
+Создать Secret с данными подключения:
 
 ```bash
 kubectl apply -f k8s/01-secret.yaml
@@ -154,7 +178,7 @@ kubectl wait \
 kubectl get pods
 ```
 
-## 4. Выполнение первоначальной миграции
+## 4. Первоначальная миграция
 
 Создать ConfigMap приложения и ConfigMap с SQL-миграцией:
 
@@ -178,15 +202,10 @@ kubectl wait \
   --timeout=120s
 ```
 
-Проверить статус:
+Проверить:
 
 ```bash
 kubectl get jobs
-```
-
-Посмотреть лог миграции:
-
-```bash
 kubectl logs job/user-service-migration
 ```
 
@@ -202,7 +221,7 @@ kubectl apply -f k8s/06-service.yaml
 kubectl apply -f k8s/07-ingress.yaml
 ```
 
-Проверить состояние:
+Проверить:
 
 ```bash
 kubectl get pods
@@ -219,7 +238,7 @@ READY   STATUS
 1/1     Running
 ```
 
-## 6. Настройка доступа к Ingress
+## 6. Доступ через Ingress
 
 Добавить в `/etc/hosts`:
 
@@ -233,7 +252,7 @@ READY   STATUS
 minikube tunnel
 ```
 
-Проверить health endpoint:
+Проверить приложение:
 
 ```bash
 curl http://arch.homework/health/
@@ -247,15 +266,17 @@ curl http://arch.homework/health/
 }
 ```
 
-Проверить API пользователей:
+Проверить API:
 
 ```bash
 curl http://arch.homework/users
 ```
 
-## 7. CRUD API
+---
 
-### Создание пользователя
+# CRUD API
+
+## Создание пользователя
 
 ```bash
 curl -X POST http://arch.homework/users \
@@ -275,13 +296,13 @@ curl -X POST http://arch.homework/users \
 HTTP 201 Created
 ```
 
-### Получение пользователя
+## Получение пользователя
 
 ```bash
 curl http://arch.homework/users/1
 ```
 
-### Обновление пользователя
+## Обновление пользователя
 
 ```bash
 curl -X PUT http://arch.homework/users/1 \
@@ -295,7 +316,7 @@ curl -X PUT http://arch.homework/users/1 \
   }'
 ```
 
-### Удаление пользователя
+## Удаление пользователя
 
 ```bash
 curl -X DELETE http://arch.homework/users/1
@@ -307,7 +328,198 @@ curl -X DELETE http://arch.homework/users/1
 HTTP 204 No Content
 ```
 
-## 8. Postman / Newman
+---
+
+# Мониторинг
+
+## Метрики User Service
+
+Приложение использует Spring Boot Actuator и Micrometer для экспорта метрик в формате Prometheus.
+
+Endpoint:
+
+```text
+/actuator/prometheus
+```
+
+Prometheus собирает метрики непосредственно с pod'ов User Service.
+
+Основная HTTP-метрика:
+
+```text
+http_server_requests_seconds
+```
+
+Она используется для построения:
+
+- RPS по API;
+- latency;
+- количества HTTP 5xx ошибок.
+
+Системный endpoint `/actuator/prometheus` исключается из прикладных графиков, чтобы запросы самого Prometheus не влияли на статистику API.
+
+## Метрики NGINX Ingress
+
+NGINX Ingress Controller экспортирует собственные Prometheus-метрики.
+
+Используемые метрики:
+
+```text
+nginx_ingress_controller_requests
+nginx_ingress_controller_request_duration_seconds
+```
+
+На их основе отображаются:
+
+- RPS через Ingress;
+- latency Ingress;
+- HTTP 5xx error rate.
+
+---
+
+# Prometheus и Grafana
+
+Prometheus и Grafana используются для мониторинга приложения и Ingress Controller.
+
+Проверить запущенные компоненты мониторинга:
+
+```bash
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+Для локального доступа к Grafana можно использовать port-forward:
+
+```bash
+kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
+```
+
+После этого Grafana доступна по адресу:
+
+```text
+http://localhost:3000
+```
+
+Prometheus используется в Grafana в качестве datasource.
+
+---
+
+# Grafana Dashboard
+
+Создан dashboard:
+
+```text
+User-service
+```
+
+Dashboard содержит следующие панели.
+
+### User Service
+
+- `User Service — RPS by API`
+- `User Service — Latency by API`
+- `User Service — 500 Error Rate by API`
+
+Метрики группируются по API и HTTP method.
+
+### NGINX Ingress
+
+- `NGINX Ingress — RPS`
+- `NGINX Ingress — Latency`
+- `NGINX Ingress — 500 Error Rate`
+
+Таким образом можно отдельно наблюдать поведение самого приложения и входящего трафика через Ingress.
+
+Примеры PromQL-запросов.
+
+RPS приложения:
+
+```promql
+sum by (method, uri) (
+  rate(
+    http_server_requests_seconds_count{
+      job="user-service",
+      uri!="/actuator/prometheus"
+    }[1m]
+  )
+)
+```
+
+500 errors:
+
+```promql
+sum by (method, uri) (
+  rate(
+    http_server_requests_seconds_count{
+      job="user-service",
+      status=~"5..",
+      uri!="/actuator/prometheus"
+    }[1m]
+  )
+)
+```
+
+NGINX Ingress RPS:
+
+```promql
+sum(
+  rate(
+    nginx_ingress_controller_requests{
+      ingress="user-service-ingress"
+    }[1m]
+  )
+)
+```
+
+---
+
+# Alerting
+
+В Grafana настроен alert:
+
+```text
+User Service — High Error Rate
+```
+
+Alert отслеживает появление HTTP `5xx` ответов User Service.
+
+PromQL:
+
+```promql
+sum(
+  rate(
+    http_server_requests_seconds_count{
+      job="user-service",
+      status=~"5..",
+      uri!="/actuator/prometheus"
+    }[1m]
+  )
+) or vector(0)
+```
+
+Условие:
+
+```text
+value > 0
+```
+
+Pending period:
+
+```text
+1m
+```
+
+Если сервис продолжает возвращать `5xx` ошибки в течение заданного периода, alert переходит в состояние:
+
+```text
+Firing
+```
+
+Для учебного окружения используется тестовый contact point `empty`, поэтому реальная отправка уведомлений во внешнюю систему не выполняется.
+
+---
+
+# Postman / Newman
 
 Postman collection находится в:
 
@@ -331,13 +543,13 @@ ID созданного пользователя автоматически со
 
 Для каждого запуска генерируется уникальный `runId`, поэтому коллекцию можно запускать повторно без конфликта уникальных `username` и `email`.
 
-Запустить коллекцию через Newman:
+Запуск:
 
 ```bash
 npx newman run postman/user-service.postman_collection.json
 ```
 
-При успешном выполнении все четыре запроса и все assertions должны завершиться без ошибок:
+При успешном выполнении:
 
 ```text
 iterations        1   failed 0
@@ -346,7 +558,9 @@ test-scripts      4   failed 0
 assertions        7   failed 0
 ```
 
-## 9. Kubernetes manifests
+---
+
+# Kubernetes manifests
 
 ```text
 k8s/
@@ -371,7 +585,9 @@ k8s/
 - `07-ingress.yaml` — Ingress для `arch.homework`
 - `postgres-values.yaml` — values для PostgreSQL Helm chart
 
-## 10. Docker
+---
+
+# Docker
 
 Docker image:
 
@@ -395,9 +611,45 @@ docker buildx build \
   --push .
 ```
 
-## 11. Удаление ресурсов
+---
 
-Удалить ресурсы приложения:
+# Проверка мониторинга
+
+Для генерации нагрузки можно выполнить несколько запросов к API:
+
+```bash
+for i in {1..20}; do
+  curl -s http://arch.homework/health/ > /dev/null
+done
+```
+
+После этого запросы отображаются в метриках NGINX Ingress.
+
+Для проверки alert необходимо сгенерировать HTTP `5xx` ответы приложения и поддерживать их появление дольше `Pending period`.
+
+После выполнения условия alert:
+
+```text
+User Service — High Error Rate
+```
+
+переходит в состояние:
+
+```text
+Firing
+```
+
+Результат можно проверить в:
+
+```text
+Grafana → Alerting → Alert rules
+```
+
+---
+
+# Удаление ресурсов
+
+Удалить приложение:
 
 ```bash
 kubectl delete -f k8s/07-ingress.yaml
@@ -420,7 +672,13 @@ helm uninstall user-service-postgres
 kubectl delete -f k8s/01-secret.yaml
 ```
 
-При необходимости полностью остановить Minikube:
+Удалить monitoring stack при необходимости:
+
+```bash
+helm uninstall prometheus -n monitoring
+```
+
+Остановить Minikube:
 
 ```bash
 minikube stop
