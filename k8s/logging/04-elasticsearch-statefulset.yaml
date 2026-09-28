@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  serviceName: elasticsearch-headless
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: elasticsearch
+
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+
+    spec:
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.17.4
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 9200
+
+            - name: transport
+              containerPort: 9300
+
+          env:
+            - name: discovery.type
+              value: single-node
+
+            - name: xpack.security.enabled
+              value: "false"
+
+            - name: xpack.security.enrollment.enabled
+              value: "false"
+
+            - name: node.store.allow_mmap
+              value: "false"
+
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+
+          resources:
+            requests:
+              memory: 768Mi
+              cpu: 250m
+            limits:
+              memory: 1Gi
+              cpu: "1"
+
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+
+        resources:
+          requests:
+            storage: 5Gi

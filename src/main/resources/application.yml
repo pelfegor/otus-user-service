@@ -26,3 +26,7 @@ management:
     distribution:
       percentiles-histogram:
         http.server.requests: true
+logging:
+  structured:
+    format:
+      console: logstash

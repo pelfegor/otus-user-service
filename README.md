@@ -1,10 +1,12 @@
 # User Service
 
-RESTful CRUD-сервис для управления пользователями, развернутый в Kubernetes с PostgreSQL, мониторингом через Prometheus и визуализацией метрик в Grafana.
+RESTful CRUD-сервис для управления пользователями, развернутый в Kubernetes с PostgreSQL, мониторингом через Prometheus/Grafana и централизованным логированием на базе Elasticsearch, Fluent Bit и Kibana.
 
 Проект выполнен в рамках домашних заданий OTUS по микросервисной архитектуре.
 
-## Функциональность
+---
+
+# Функциональность
 
 Сервис предоставляет CRUD API для управления пользователями:
 
@@ -18,7 +20,11 @@ RESTful CRUD-сервис для управления пользователям
 | GET | `/health/` | Проверка состояния сервиса |
 | GET | `/actuator/prometheus` | Метрики приложения для Prometheus |
 
-## Стек
+---
+
+# Стек
+
+## Application
 
 - Java 21
 - Spring Boot 3.5
@@ -27,15 +33,34 @@ RESTful CRUD-сервис для управления пользователям
 - Micrometer
 - PostgreSQL
 - Gradle
+
+## Infrastructure
+
 - Docker
 - Kubernetes
+- Minikube
 - Helm
 - NGINX Ingress Controller
+
+## Monitoring
+
 - Prometheus
 - Grafana
-- Postman / Newman
 
-## Архитектура
+## Centralized Logging
+
+- Elasticsearch 8.17.4
+- Kibana 8.17.4
+- Fluent Bit 3.2.10
+
+## Testing
+
+- Postman
+- Newman
+
+---
+
+# Архитектура
 
 ```text
                               ┌──────────────────┐
@@ -56,32 +81,79 @@ RESTful CRUD-сервис для управления пользователям
                           ┌────────────┴────────────┐
                           ▼                         ▼
                    ┌─────────────┐           ┌─────────────┐
-                   │ User Service│           │ User Service│
+                   │User Service │           │User Service │
                    │    Pod 1    │           │    Pod 2    │
                    └──────┬──────┘           └──────┬──────┘
                           │                         │
                           └────────────┬────────────┘
+                                       │
                                        ▼
                               ┌──────────────────┐
                               │    PostgreSQL    │
                               └──────────────────┘
-
-
-                   ┌───────────────────────────────┐
-                   │          Monitoring           │
-                   │                               │
-User Service ─────►│ Prometheus ─────► Grafana    │
-NGINX Ingress ────►│                               │
-                   └───────────────────────────────┘
 ```
+
+## Monitoring
+
+```text
+User Service ─────┐
+                  │
+                  ▼
+             ┌────────────┐
+             │ Prometheus │
+             └─────┬──────┘
+                   │
+                   ▼
+             ┌────────────┐
+             │  Grafana   │
+             └────────────┘
+
+NGINX Ingress ────► Prometheus
+```
+
+Prometheus собирает метрики User Service и NGINX Ingress Controller.
+
+Grafana используется для визуализации метрик и alerting.
+
+## Централизованное логирование
+
+```text
+┌────────────────────┐
+│    User Service    │
+│      stdout        │
+└─────────┬──────────┘
+          │
+          ▼
+ /var/log/containers/*.log
+          │
+          ▼
+┌────────────────────┐
+│     Fluent Bit     │
+│     DaemonSet      │
+└─────────┬──────────┘
+          │
+          ▼
+┌────────────────────┐
+│   Elasticsearch    │
+│ fluent-bit-logs-*  │
+└─────────┬──────────┘
+          │
+          ▼
+┌────────────────────┐
+│       Kibana       │
+│ Discover / Charts  │
+└────────────────────┘
+```
+
+Fluent Bit собирает container logs с Kubernetes node и отправляет их в Elasticsearch.
+
+Kibana используется для поиска, фильтрации и визуализации логов.
 
 Конфигурация приложения хранится в Kubernetes `ConfigMap`.
 
 Данные для подключения к PostgreSQL хранятся в Kubernetes `Secret`.
 
 Первоначальная миграция базы данных выполняется отдельным Kubernetes `Job`.
-
-Метрики User Service и NGINX Ingress собираются Prometheus и отображаются в Grafana.
 
 ---
 
@@ -97,6 +169,8 @@ NGINX Ingress ────►│                               │
 - Helm
 - Node.js / npm — для запуска Newman
 
+---
+
 ## 1. Запуск Kubernetes
 
 Запустить Minikube:
@@ -110,6 +184,8 @@ minikube start --driver=docker
 ```bash
 kubectl get nodes
 ```
+
+---
 
 ## 2. NGINX Ingress Controller
 
@@ -138,6 +214,8 @@ kubectl get svc -n m
 ```
 
 Для сбора метрик NGINX Ingress Controller должен предоставлять metrics endpoint на порту `10254`.
+
+---
 
 ## 3. Установка PostgreSQL
 
@@ -178,6 +256,8 @@ kubectl wait \
 kubectl get pods
 ```
 
+---
+
 ## 4. Первоначальная миграция
 
 Создать ConfigMap приложения и ConfigMap с SQL-миграцией:
@@ -209,7 +289,33 @@ kubectl get jobs
 kubectl logs job/user-service-migration
 ```
 
-Job должен иметь статус `Complete`.
+Job должен иметь статус:
+
+```text
+Complete
+```
+
+Migration Job пишет структурированные JSON-логи начала и окончания миграции.
+
+Пример:
+
+```json
+{
+  "level": "INFO",
+  "service": "user-service-migration",
+  "message": "Database migration started"
+}
+```
+
+```json
+{
+  "level": "INFO",
+  "service": "user-service-migration",
+  "message": "Database migration completed"
+}
+```
+
+---
 
 ## 5. Запуск User Service
 
@@ -237,6 +343,15 @@ Deployment запускает две реплики приложения.
 READY   STATUS
 1/1     Running
 ```
+
+Проверить используемый Docker image:
+
+```bash
+kubectl get pods -l app=user-service \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" -> "}{.spec.containers[0].image}{"\n"}{end}'
+```
+
+---
 
 ## 6. Доступ через Ingress
 
@@ -296,11 +411,23 @@ curl -X POST http://arch.homework/users \
 HTTP 201 Created
 ```
 
+---
+
 ## Получение пользователя
 
 ```bash
 curl http://arch.homework/users/1
 ```
+
+---
+
+## Получение списка пользователей
+
+```bash
+curl http://arch.homework/users
+```
+
+---
 
 ## Обновление пользователя
 
@@ -315,6 +442,8 @@ curl -X PUT http://arch.homework/users/1 \
     "phone": "+79990000002"
   }'
 ```
+
+---
 
 ## Удаление пользователя
 
@@ -358,6 +487,8 @@ http_server_requests_seconds
 
 Системный endpoint `/actuator/prometheus` исключается из прикладных графиков, чтобы запросы самого Prometheus не влияли на статистику API.
 
+---
+
 ## Метрики NGINX Ingress
 
 NGINX Ingress Controller экспортирует собственные Prometheus-метрики.
@@ -388,7 +519,7 @@ kubectl get pods -n monitoring
 kubectl get svc -n monitoring
 ```
 
-Для локального доступа к Grafana можно использовать port-forward:
+Для локального доступа к Grafana:
 
 ```bash
 kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
@@ -414,7 +545,7 @@ User-service
 
 Dashboard содержит следующие панели.
 
-### User Service
+## User Service
 
 - `User Service — RPS by API`
 - `User Service — Latency by API`
@@ -422,7 +553,7 @@ Dashboard содержит следующие панели.
 
 Метрики группируются по API и HTTP method.
 
-### NGINX Ingress
+## NGINX Ingress
 
 - `NGINX Ingress — RPS`
 - `NGINX Ingress — Latency`
@@ -430,9 +561,7 @@ Dashboard содержит следующие панели.
 
 Таким образом можно отдельно наблюдать поведение самого приложения и входящего трафика через Ingress.
 
-Примеры PromQL-запросов.
-
-RPS приложения:
+### RPS приложения
 
 ```promql
 sum by (method, uri) (
@@ -445,7 +574,7 @@ sum by (method, uri) (
 )
 ```
 
-500 errors:
+### HTTP 500 приложения
 
 ```promql
 sum by (method, uri) (
@@ -459,7 +588,7 @@ sum by (method, uri) (
 )
 ```
 
-NGINX Ingress RPS:
+### NGINX Ingress RPS
 
 ```promql
 sum(
@@ -519,6 +648,415 @@ Firing
 
 ---
 
+# Централизованное логирование
+
+Для централизованного сбора и анализа логов используется стек EFK:
+
+- Elasticsearch — хранение и поиск логов;
+- Fluent Bit — сбор и доставка логов Kubernetes;
+- Kibana — поиск, фильтрация и визуализация.
+
+---
+
+## Structured logging
+
+User Service пишет структурированные JSON-логи в `stdout`.
+
+Для этого используется встроенная поддержка structured logging Spring Boot.
+
+Конфигурация:
+
+```yaml
+logging:
+  structured:
+    format:
+      console: logstash
+```
+
+Логируются:
+
+- запуск приложения — `INFO`;
+- остановка приложения — `INFO`;
+- входящие HTTP-запросы — `INFO`;
+- успешное создание пользователя — `INFO`;
+- успешное обновление пользователя — `INFO`;
+- успешное удаление пользователя — `INFO`;
+- ошибки валидации — `WARN`;
+- попытки обращения к отсутствующему пользователю — `WARN`;
+- конфликты уникальных значений — `WARN`;
+- ошибки доступа к БД — `ERROR`;
+- непредвиденные ошибки приложения — `ERROR`.
+
+Spring Boot 3.5 предоставляет встроенную поддержку structured logging для console output.
+
+---
+
+## Request ID
+
+Для каждого входящего HTTP-запроса генерируется уникальный:
+
+```text
+request_id
+```
+
+`request_id` помещается в MDC и автоматически присутствует в логах, созданных во время обработки запроса.
+
+Пример:
+
+```json
+{
+  "@timestamp": "2026-09-28T18:14:33.219858346Z",
+  "@version": "1",
+  "message": "Incoming HTTP request",
+  "level": "INFO",
+  "request_id": "ae0579c2-b4b9-4ce4-aae4-62beba786e77"
+}
+```
+
+Это позволяет найти все логи, относящиеся к одному HTTP-запросу.
+
+---
+
+## HTTP request logging
+
+Для входящих HTTP-запросов логируются:
+
+- HTTP method;
+- request path;
+- client IP;
+- request ID.
+
+Пример сообщения:
+
+```text
+Incoming HTTP request
+```
+
+Дополнительные данные запроса передаются в structured log.
+
+---
+
+## CRUD logging
+
+Успешные изменяющие CRUD-операции логируются на уровне `INFO`.
+
+Для идентификатора пользователя используется отдельное структурированное поле:
+
+```text
+user_id
+```
+
+Пример:
+
+```json
+{
+  "message": "User created",
+  "level": "INFO",
+  "user_id": 12748
+}
+```
+
+Аналогично логируются:
+
+```text
+User updated
+User deleted
+```
+
+Это позволяет искать операции конкретного пользователя непосредственно по полю `user_id`, не разбирая текст сообщения.
+
+---
+
+# Migration Job logging
+
+Kubernetes migration Job также пишет структурированные JSON-логи в stdout.
+
+Лог начала миграции:
+
+```json
+{
+  "level": "INFO",
+  "service": "user-service-migration",
+  "message": "Database migration started"
+}
+```
+
+Лог успешного окончания:
+
+```json
+{
+  "level": "INFO",
+  "service": "user-service-migration",
+  "message": "Database migration completed"
+}
+```
+
+Migration Job можно найти в Kibana по:
+
+```text
+service: "user-service-migration"
+```
+
+---
+
+# Elasticsearch
+
+Elasticsearch развернут в namespace:
+
+```text
+logging
+```
+
+Используется:
+
+- StatefulSet;
+- single-node configuration;
+- PersistentVolumeClaim;
+- Headless Service;
+- ClusterIP Service.
+
+Проверить:
+
+```bash
+kubectl get pods -n logging
+kubectl get svc -n logging
+kubectl get pvc -n logging
+```
+
+Для локального доступа:
+
+```bash
+kubectl port-forward -n logging svc/elasticsearch 9200:9200
+```
+
+Проверить Elasticsearch:
+
+```bash
+curl http://localhost:9200
+```
+
+Проверить индексы Fluent Bit:
+
+```bash
+curl 'http://localhost:9200/_cat/indices/fluent-bit-logs-*?v'
+```
+
+Логи хранятся в daily indices:
+
+```text
+fluent-bit-logs-YYYY.MM.DD
+```
+
+Например:
+
+```text
+fluent-bit-logs-2026.09.28
+```
+
+---
+
+# Fluent Bit
+
+Fluent Bit развернут как Kubernetes `DaemonSet`.
+
+Проверить:
+
+```bash
+kubectl get daemonset -n logging
+kubectl get pods -n logging -l app=fluent-bit
+```
+
+Fluent Bit читает container logs с Kubernetes node:
+
+```text
+/var/log/containers/*.log
+```
+
+К логам добавляются Kubernetes metadata:
+
+- pod name;
+- namespace;
+- container name;
+- labels;
+- container image;
+- pod IP;
+- host.
+
+Пример Kubernetes metadata:
+
+```json
+{
+  "kubernetes": {
+    "pod_name": "user-service-844d47ffd-sknjr",
+    "namespace_name": "default",
+    "container_name": "user-service",
+    "labels": {
+      "app": "user-service"
+    }
+  }
+}
+```
+
+JSON-логи приложения объединяются с Kubernetes metadata и отправляются в Elasticsearch.
+
+Elasticsearch output настроен с:
+
+```text
+Logstash_Format On
+Logstash_Prefix fluent-bit-logs
+```
+
+Проверить логи Fluent Bit:
+
+```bash
+kubectl logs -n logging -l app=fluent-bit
+```
+
+---
+
+# Kibana
+
+Kibana развернута в namespace:
+
+```text
+logging
+```
+
+Для локального доступа:
+
+```bash
+kubectl port-forward -n logging svc/kibana 5601:5601
+```
+
+После этого Kibana доступна на:
+
+```text
+http://localhost:5601
+```
+
+---
+
+## Data View
+
+Для просмотра логов создан Data View:
+
+```text
+Fluent Bit Logs
+```
+
+Index pattern:
+
+```text
+fluent-bit-logs-*
+```
+
+Time field:
+
+```text
+@timestamp
+```
+
+---
+
+## Поиск логов User Service
+
+В Kibana Discover:
+
+```text
+kubernetes.container_name: "user-service"
+```
+
+Отображаются централизованные логи обеих реплик приложения.
+
+---
+
+## Поиск WARN
+
+Для поиска ошибок валидации:
+
+```text
+kubernetes.container_name: "user-service" and level: "WARN"
+```
+
+Пример сообщения:
+
+```text
+Request validation failed
+```
+
+Лог содержит:
+
+- `level`;
+- `message`;
+- `request_id`;
+- Kubernetes metadata.
+
+---
+
+## Поиск CRUD по user_id
+
+Для поиска операции конкретного пользователя:
+
+```text
+kubernetes.container_name: "user-service" and user_id: 12748
+```
+
+Пример результата:
+
+```text
+level      INFO
+message    User created
+user_id    12748
+request_id c3e7533e-8ae1-420b-a035-d0cb8f283a49
+```
+
+Поле `user_id` хранится отдельно от `message`, что позволяет использовать его для поиска и фильтрации.
+
+---
+
+## Поиск migration Job
+
+```text
+service: "user-service-migration"
+```
+
+В результате отображаются:
+
+```text
+Database migration started
+Database migration completed
+```
+
+---
+
+## Histogram по уровню логирования
+
+Для анализа количества логов во времени используется histogram.
+
+Фильтр:
+
+```text
+kubernetes.container_name: "user-service"
+```
+
+Breakdown:
+
+```text
+level.keyword
+```
+
+Это позволяет отдельно отображать количество логов уровней:
+
+```text
+INFO
+WARN
+ERROR
+```
+
+при их наличии за выбранный временной диапазон.
+
+---
+
 # Postman / Newman
 
 Postman collection находится в:
@@ -571,19 +1109,53 @@ k8s/
 ├── 05-deployment.yaml
 ├── 06-service.yaml
 ├── 07-ingress.yaml
-└── postgres-values.yaml
+├── postgres-values.yaml
+└── logging/
+    ├── 01-namespace.yaml
+    ├── 02-elasticsearch-headless-service.yaml
+    ├── 03-elasticsearch-service.yaml
+    ├── 04-elasticsearch-statefulset.yaml
+    ├── 05-kibana-deployment.yaml
+    ├── 06-kibana-service.yaml
+    ├── 07-fluent-bit-service-account.yaml
+    ├── 08-fluent-bit-cluster-role.yaml
+    ├── 09-fluent-bit-cluster-role-binding.yaml
+    ├── 10-fluent-bit-configmap.yaml
+    └── 11-fluent-bit-daemonset.yaml
 ```
 
-Назначение ресурсов:
+## Основные ресурсы приложения
 
-- `01-secret.yaml` — credentials PostgreSQL
-- `02-configmap.yaml` — конфигурация User Service
-- `03-migration-configmap.yaml` — SQL первоначальной миграции
-- `04-migration-job.yaml` — Kubernetes Job для выполнения миграции
-- `05-deployment.yaml` — Deployment приложения с двумя репликами
-- `06-service.yaml` — ClusterIP Service
-- `07-ingress.yaml` — Ingress для `arch.homework`
-- `postgres-values.yaml` — values для PostgreSQL Helm chart
+- `01-secret.yaml` — credentials PostgreSQL;
+- `02-configmap.yaml` — конфигурация User Service;
+- `03-migration-configmap.yaml` — SQL первоначальной миграции;
+- `04-migration-job.yaml` — Kubernetes Job для выполнения миграции;
+- `05-deployment.yaml` — Deployment приложения с двумя репликами;
+- `06-service.yaml` — ClusterIP Service;
+- `07-ingress.yaml` — Ingress для `arch.homework`;
+- `postgres-values.yaml` — values для PostgreSQL Helm chart.
+
+## Centralized logging
+
+Ресурсы централизованного логирования находятся в:
+
+```text
+k8s/logging/
+```
+
+Они разворачивают:
+
+- namespace `logging`;
+- Elasticsearch StatefulSet;
+- PersistentVolumeClaim для Elasticsearch;
+- Elasticsearch Headless Service;
+- Elasticsearch ClusterIP Service;
+- Kibana Deployment;
+- Kibana Service;
+- ServiceAccount для Fluent Bit;
+- RBAC для доступа Fluent Bit к Kubernetes metadata;
+- Fluent Bit ConfigMap;
+- Fluent Bit DaemonSet.
 
 ---
 
@@ -592,7 +1164,7 @@ k8s/
 Docker image:
 
 ```text
-pelfegor/user-service:1.0.0
+pelfegor/user-service:1.2.0
 ```
 
 Образ поддерживает:
@@ -607,8 +1179,15 @@ linux/arm64
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t pelfegor/user-service:1.0.0 \
+  -t pelfegor/user-service:1.2.0 \
   --push .
+```
+
+Проверить используемый Kubernetes image:
+
+```bash
+kubectl get pods -l app=user-service \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" -> "}{.spec.containers[0].image}{"\n"}{end}'
 ```
 
 ---
@@ -647,9 +1226,95 @@ Grafana → Alerting → Alert rules
 
 ---
 
+# Проверка централизованного логирования
+
+## Проверить компоненты EFK
+
+```bash
+kubectl get pods -n logging
+kubectl get svc -n logging
+kubectl get daemonset -n logging
+kubectl get statefulset -n logging
+kubectl get pvc -n logging
+```
+
+## Проверить Elasticsearch
+
+Запустить:
+
+```bash
+kubectl port-forward -n logging svc/elasticsearch 9200:9200
+```
+
+В другом терминале:
+
+```bash
+curl http://localhost:9200
+```
+
+Проверить индексы:
+
+```bash
+curl 'http://localhost:9200/_cat/indices/fluent-bit-logs-*?v'
+```
+
+## Проверить Kibana
+
+```bash
+kubectl port-forward -n logging svc/kibana 5601:5601
+```
+
+Открыть:
+
+```text
+http://localhost:5601
+```
+
+## Сгенерировать INFO лог
+
+```bash
+curl http://arch.homework/users
+```
+
+## Сгенерировать WARN лог
+
+```bash
+curl -X POST http://arch.homework/users \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+После этого в Kibana Discover можно выполнить:
+
+```text
+kubernetes.container_name: "user-service" and level: "WARN"
+```
+
+## Сгенерировать CRUD лог с user_id
+
+```bash
+curl -X POST http://arch.homework/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "kibana-test",
+    "firstName": "Kibana",
+    "lastName": "Test",
+    "email": "kibana-test@example.com",
+    "phone": "+79991112233"
+  }'
+```
+
+Полученный `id` можно использовать для поиска:
+
+```text
+kubernetes.container_name: "user-service" and user_id: <USER_ID>
+```
+
+---
+
 # Удаление ресурсов
 
-Удалить приложение:
+## Удалить приложение
 
 ```bash
 kubectl delete -f k8s/07-ingress.yaml
@@ -660,7 +1325,7 @@ kubectl delete -f k8s/03-migration-configmap.yaml
 kubectl delete -f k8s/02-configmap.yaml
 ```
 
-Удалить PostgreSQL:
+## Удалить PostgreSQL
 
 ```bash
 helm uninstall user-service-postgres
@@ -672,13 +1337,31 @@ helm uninstall user-service-postgres
 kubectl delete -f k8s/01-secret.yaml
 ```
 
-Удалить monitoring stack при необходимости:
+## Удалить centralized logging
+
+```bash
+kubectl delete -f k8s/logging/11-fluent-bit-daemonset.yaml
+kubectl delete -f k8s/logging/10-fluent-bit-configmap.yaml
+kubectl delete -f k8s/logging/09-fluent-bit-cluster-role-binding.yaml
+kubectl delete -f k8s/logging/08-fluent-bit-cluster-role.yaml
+kubectl delete -f k8s/logging/07-fluent-bit-service-account.yaml
+kubectl delete -f k8s/logging/06-kibana-service.yaml
+kubectl delete -f k8s/logging/05-kibana-deployment.yaml
+kubectl delete -f k8s/logging/04-elasticsearch-statefulset.yaml
+kubectl delete -f k8s/logging/03-elasticsearch-service.yaml
+kubectl delete -f k8s/logging/02-elasticsearch-headless-service.yaml
+kubectl delete -f k8s/logging/01-namespace.yaml
+```
+
+## Удалить monitoring stack
+
+При необходимости:
 
 ```bash
 helm uninstall prometheus -n monitoring
 ```
 
-Остановить Minikube:
+## Остановить Minikube
 
 ```bash
 minikube stop

@@ -21,8 +21,12 @@ spec:
             - sh
             - -c
             - |
+              set -e
+
+              echo '{"level":"INFO","service":"user-service-migration","message":"Database migration started"}'
+
               until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME"; do
-                echo "Waiting for PostgreSQL..."
+                echo '{"level":"INFO","service":"user-service-migration","message":"Waiting for PostgreSQL"}'
                 sleep 2
               done
 
@@ -35,6 +39,7 @@ spec:
                 -d "$DB_NAME" \
                 -f /migration/V1__create_users.sql
 
+              echo '{"level":"INFO","service":"user-service-migration","message":"Database migration completed"}'
           env:
             - name: DB_HOST
               valueFrom:

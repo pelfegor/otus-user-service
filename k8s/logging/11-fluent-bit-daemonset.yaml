@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+
+      containers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:3.2.10
+          imagePullPolicy: IfNotPresent
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+
+            - name: docker-containers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc/
+
+            - name: fluent-bit-state
+              mountPath: /var/lib/fluent-bit
+
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+            type: Directory
+
+        - name: docker-containers
+          hostPath:
+            path: /var/lib/docker/containers
+            type: Directory
+
+        - name: fluent-bit-config
+          configMap:
+            name: fluent-bit-config
+
+        - name: fluent-bit-state
+          hostPath:
+            path: /var/lib/fluent-bit
+            type: DirectoryOrCreate
