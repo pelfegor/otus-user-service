@@ -20,6 +20,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             LoggerFactory.getLogger(RequestLoggingFilter.class);
 
     private static final String REQUEST_ID = "request_id";
+    private static final String REQUEST_ID_HEADER = "X-Request-ID";
 
     @Override
     protected void doFilterInternal(
@@ -30,18 +31,28 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
         String requestId = UUID.randomUUID().toString();
 
-        MDC.put(REQUEST_ID, requestId);
+        response.setHeader(REQUEST_ID_HEADER, requestId);
+        long startedAt = System.nanoTime();
 
-        try {
-            log.atInfo()
-                    .addKeyValue("method", request.getMethod())
-                    .addKeyValue("path", request.getRequestURI())
-                    .addKeyValue("client_ip", getClientIp(request))
-                    .log("Incoming HTTP request");
+        try (MDC.MDCCloseable ignored = MDC.putCloseable(REQUEST_ID, requestId)) {
+            try {
+                log.atInfo()
+                        .addKeyValue("method", request.getMethod())
+                        .addKeyValue("path", request.getRequestURI())
+                        .addKeyValue("client_ip", getClientIp(request))
+                        .log("Incoming HTTP request");
 
-            filterChain.doFilter(request, response);
-        } finally {
-            MDC.remove(REQUEST_ID);
+                filterChain.doFilter(request, response);
+            } finally {
+                long durationMillis =
+                        (System.nanoTime() - startedAt) / 1_000_000;
+                log.atInfo()
+                        .addKeyValue("method", request.getMethod())
+                        .addKeyValue("path", request.getRequestURI())
+                        .addKeyValue("status", response.getStatus())
+                        .addKeyValue("duration_ms", durationMillis)
+                        .log("HTTP request completed");
+            }
         }
     }
 

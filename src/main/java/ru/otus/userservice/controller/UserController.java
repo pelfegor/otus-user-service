@@ -1,15 +1,18 @@
 package ru.otus.userservice.controller;
 
 import jakarta.validation.Valid;
-import ru.otus.userservice.dto.CreateUserRequest;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 import ru.otus.userservice.dto.UpdateUserRequest;
 import ru.otus.userservice.dto.UserResponse;
 import ru.otus.userservice.service.UserService;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.net.URI;
-import java.util.List;
 
 @RestController
 @RequestMapping("/users")
@@ -21,36 +24,23 @@ public class UserController {
         this.userService = userService;
     }
 
-    @PostMapping
-    public ResponseEntity<UserResponse> create(
-            @Valid @RequestBody CreateUserRequest request
-    ) {
-        UserResponse response = userService.create(request);
-
-        return ResponseEntity
-                .created(URI.create("/users/" + response.id()))
-                .body(response);
-    }
-
     @GetMapping("/{id}")
+    @PreAuthorize("@userAuthorization.isOwner(#id, authentication)")
     public UserResponse findById(@PathVariable Long id) {
-        return userService.findById(id);
-    }
-
-    @GetMapping
-    public List<UserResponse> findAll() {
-        return userService.findAll();
+        return UserResponse.from(userService.findById(id));
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("@userAuthorization.isOwner(#id, authentication)")
     public UserResponse update(
             @PathVariable Long id,
             @Valid @RequestBody UpdateUserRequest request
     ) {
-        return userService.update(id, request);
+        return UserResponse.from(userService.update(id, request.toCommand()));
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("@userAuthorization.isOwner(#id, authentication)")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         userService.delete(id);
         return ResponseEntity.noContent().build();

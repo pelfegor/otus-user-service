@@ -16,3 +16,5 @@ data:
         CONSTRAINT uk_users_username UNIQUE (username),
         CONSTRAINT uk_users_email UNIQUE (email)
     );
+    ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS password VARCHAR(255);

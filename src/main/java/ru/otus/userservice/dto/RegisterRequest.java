@@ -4,11 +4,15 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-public record CreateUserRequest(
+public record RegisterRequest(
 
         @NotBlank
         @Size(max = 100)
         String username,
+
+        @NotBlank
+        @Size(min = 6, max = 100)
+        String password,
 
         @NotBlank
         @Size(max = 100)
@@ -26,4 +30,15 @@ public record CreateUserRequest(
         @Size(max = 50)
         String phone
 ) {
+
+    public RegisterCommand toCommand() {
+        return new RegisterCommand(
+                username,
+                password,
+                firstName,
+                lastName,
+                email,
+                phone
+        );
+    }
 }

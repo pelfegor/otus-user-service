@@ -10,7 +10,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class ApplicationLifecycleLogger {
 
-    private static final Logger log = LoggerFactory.getLogger(ApplicationLifecycleLogger.class);
+    private static final Logger log =
+            LoggerFactory.getLogger(ApplicationLifecycleLogger.class);
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {

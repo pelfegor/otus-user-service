@@ -4,11 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-public record UpdateUserRequest(
-
-        @NotBlank
-        @Size(max = 100)
-        String username,
+public record UpdateProfileRequest(
 
         @NotBlank
         @Size(max = 100)
@@ -27,13 +23,7 @@ public record UpdateUserRequest(
         String phone
 ) {
 
-    public UpdateUserCommand toCommand() {
-        return new UpdateUserCommand(
-                username,
-                firstName,
-                lastName,
-                email,
-                phone
-        );
+    public UpdateProfileCommand toCommand() {
+        return new UpdateProfileCommand(firstName, lastName, email, phone);
     }
 }

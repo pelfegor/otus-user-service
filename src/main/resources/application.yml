@@ -26,7 +26,12 @@ management:
     distribution:
       percentiles-histogram:
         http.server.requests: true
+
 logging:
   structured:
     format:
       console: logstash
+security:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration: ${JWT_EXPIRATION:1h}

@@ -1,24 +1,69 @@
 # User Service
 
-RESTful CRUD-сервис для управления пользователями, развернутый в Kubernetes с PostgreSQL, мониторингом через Prometheus/Grafana и централизованным логированием на базе Elasticsearch, Fluent Bit и Kibana.
+REST API для управления пользователями с аутентификацией и авторизацией на основе JWT.
 
-Проект выполнен в рамках домашних заданий OTUS по микросервисной архитектуре.
+Приложение развертывается в Kubernetes, использует PostgreSQL, NGINX Ingress Controller в качестве внешней точки входа, Prometheus/Grafana для мониторинга и Elasticsearch/Fluent Bit/Kibana для централизованного логирования.
+
+Проект выполнен в рамках домашних заданий OTUS по курсу «Microservice Architecture».
 
 ---
 
 # Функциональность
 
-Сервис предоставляет CRUD API для управления пользователями:
+## Authentication
 
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/users` | Создать пользователя |
-| GET | `/users/{id}` | Получить пользователя |
-| GET | `/users` | Получить список пользователей |
-| PUT | `/users/{id}` | Обновить пользователя |
-| DELETE | `/users/{id}` | Удалить пользователя |
-| GET | `/health/` | Проверка состояния сервиса |
-| GET | `/actuator/prometheus` | Метрики приложения для Prometheus |
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| POST | `/auth/register` | Public | Регистрация пользователя |
+| POST | `/auth/login` | Public | Аутентификация и получение JWT |
+
+После успешной аутентификации клиент получает JWT access token.
+
+Для обращения к защищенным ресурсам токен передается в заголовке:
+
+```text
+Authorization: Bearer <JWT>
+```
+
+## Profile API
+
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| GET | `/profile` | Authenticated | Получить профиль текущего пользователя |
+| PUT | `/profile` | Authenticated | Изменить профиль текущего пользователя |
+
+Идентификатор текущего пользователя определяется из JWT.
+
+Передавать `userId` при работе со своим профилем не требуется.
+
+## User API
+
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| GET | `/users/{id}` | Owner only | Получить пользователя |
+| PUT | `/users/{id}` | Owner only | Изменить пользователя |
+| DELETE | `/users/{id}` | Owner only | Удалить пользователя |
+
+Доступ к данным другого пользователя запрещен и возвращает:
+
+```text
+HTTP 403 Forbidden
+```
+
+Создание пользователя выполняется через:
+
+```text
+POST /auth/register
+```
+
+Получение общего списка пользователей извне запрещено.
+
+## Service endpoints
+
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| GET | `/health/` | Public | Проверка состояния сервиса |
+| GET | `/actuator/prometheus` | Public | Метрики приложения для Prometheus |
 
 ---
 
@@ -28,9 +73,11 @@ RESTful CRUD-сервис для управления пользователям
 
 - Java 21
 - Spring Boot 3.5
+- Spring Security
 - Spring Data JDBC
 - Spring Boot Actuator
 - Micrometer
+- JJWT 0.12.6
 - PostgreSQL
 - Gradle
 
@@ -55,105 +102,249 @@ RESTful CRUD-сервис для управления пользователям
 
 ## Testing
 
+- JUnit
+- Spring Boot Test
 - Postman
 - Newman
 
 ---
 
-# Архитектура
+# Архитектура Authentication / API Gateway
+
+Внешней точкой входа в приложение является NGINX Ingress Controller.
+
+Отдельный API Gateway не разворачивается: функции маршрутизации внешнего HTTP-трафика в рамках текущей архитектуры выполняет NGINX Ingress.
+
+Аутентификация и авторизация реализованы в User Service с помощью Spring Security и JWT.
 
 ```text
-                              ┌──────────────────┐
-                              │  arch.homework   │
-                              └────────┬─────────┘
-                                       │
-                                       ▼
-                              ┌──────────────────┐
-                              │  NGINX Ingress   │
-                              └────────┬─────────┘
-                                       │
-                                       ▼
-                              ┌──────────────────┐
-                              │     Service      │
-                              │      :8000       │
-                              └────────┬─────────┘
-                                       │
-                          ┌────────────┴────────────┐
-                          ▼                         ▼
-                   ┌─────────────┐           ┌─────────────┐
-                   │User Service │           │User Service │
-                   │    Pod 1    │           │    Pod 2    │
-                   └──────┬──────┘           └──────┬──────┘
-                          │                         │
-                          └────────────┬────────────┘
-                                       │
-                                       ▼
-                              ┌──────────────────┐
-                              │    PostgreSQL    │
-                              └──────────────────┘
+                       Client / Postman / Newman
+                                  │
+                                  │ http://arch.homework
+                                  ▼
+                         ┌──────────────────┐
+                         │  NGINX Ingress   │
+                         │   API Gateway    │
+                         └────────┬─────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐
+                         │     Service      │
+                         │      :8000       │
+                         └────────┬─────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+           ┌─────────────────┐         ┌─────────────────┐
+           │  User Service   │         │  User Service   │
+           │      Pod 1      │         │      Pod 2      │
+           │                 │         │                 │
+           │ Spring Security │         │ Spring Security │
+           │ JWT validation  │         │ JWT validation  │
+           └────────┬────────┘         └────────┬────────┘
+                    │                           │
+                    └─────────────┬─────────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐
+                         │    PostgreSQL    │
+                         │      users       │
+                         └──────────────────┘
 ```
 
-## Monitoring
+Для сдачи домашнего задания схема также должна быть добавлена в репозиторий как изображение, например:
 
 ```text
-User Service ─────┐
-                  │
-                  ▼
-             ┌────────────┐
-             │ Prometheus │
-             └─────┬──────┘
-                   │
-                   ▼
-             ┌────────────┐
-             │  Grafana   │
-             └────────────┘
-
-NGINX Ingress ────► Prometheus
+docs/authentication-architecture.png
 ```
 
-Prometheus собирает метрики User Service и NGINX Ingress Controller.
+---
 
-Grafana используется для визуализации метрик и alerting.
+# Сценарий взаимодействия
 
-## Централизованное логирование
+## Регистрация
 
 ```text
-┌────────────────────┐
-│    User Service    │
-│      stdout        │
-└─────────┬──────────┘
-          │
-          ▼
- /var/log/containers/*.log
-          │
-          ▼
-┌────────────────────┐
-│     Fluent Bit     │
-│     DaemonSet      │
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│   Elasticsearch    │
-│ fluent-bit-logs-*  │
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│       Kibana       │
-│ Discover / Charts  │
-└────────────────────┘
+Client
+  │
+  │ POST /auth/register
+  ▼
+NGINX Ingress
+  │
+  ▼
+User Service
+  │
+  │ BCrypt password hash
+  ▼
+PostgreSQL
 ```
 
-Fluent Bit собирает container logs с Kubernetes node и отправляет их в Elasticsearch.
+Пароль пользователя не хранится в открытом виде.
 
-Kibana используется для поиска, фильтрации и визуализации логов.
+Перед сохранением используется BCrypt.
 
-Конфигурация приложения хранится в Kubernetes `ConfigMap`.
+---
 
-Данные для подключения к PostgreSQL хранятся в Kubernetes `Secret`.
+## Login
 
-Первоначальная миграция базы данных выполняется отдельным Kubernetes `Job`.
+```text
+Client
+  │
+  │ POST /auth/login
+  │ username + password
+  ▼
+NGINX Ingress
+  │
+  ▼
+User Service
+  │
+  │ validate credentials
+  │ generate JWT
+  ▼
+Client
+  │
+  │ accessToken
+  ▼
+```
+
+---
+
+## Доступ к защищенному API
+
+```text
+Client
+  │
+  │ Authorization: Bearer <JWT>
+  ▼
+NGINX Ingress
+  │
+  ▼
+JwtAuthenticationFilter
+  │
+  │ validate signature
+  │ validate expiration
+  │ resolve user
+  ▼
+Spring Security Context
+  │
+  ▼
+Controller
+```
+
+Приложение работает без HTTP session:
+
+```text
+SessionCreationPolicy.STATELESS
+```
+
+---
+
+# JWT
+
+JWT создается после успешного:
+
+```text
+POST /auth/login
+```
+
+Токен содержит:
+
+```text
+subject = username
+userId  = user identifier
+iat     = issued at
+exp     = expiration
+```
+
+JWT подписывается секретным ключом.
+
+Секрет передается приложению через Kubernetes Secret:
+
+```text
+JWT_SECRET
+```
+
+и не хранится непосредственно в `application.yml`.
+
+Время жизни токена задается через:
+
+```text
+JWT_EXPIRATION
+```
+
+Значение по умолчанию:
+
+```text
+3600000 ms
+```
+
+то есть 1 час.
+
+---
+
+# Авторизация
+
+Spring Security работает в stateless-режиме.
+
+Публичные endpoints:
+
+```text
+/health/**
+/actuator/prometheus
+/auth/register
+/auth/login
+```
+
+Остальные endpoints требуют аутентификацию.
+
+Для owner-based операций используется идентификатор пользователя из authenticated principal.
+
+Например, пользователь `user2` не может выполнить:
+
+```text
+GET /users/{user1Id}
+PUT /users/{user1Id}
+```
+
+Для таких запросов возвращается:
+
+```text
+HTTP 403 Forbidden
+```
+
+---
+
+# BFF
+
+Отдельный BFF-сервис в текущей реализации не вводится.
+
+В системе используется один внешний API и отсутствует необходимость в отдельных backend-интерфейсах для разных типов frontend-клиентов.
+
+NGINX Ingress является единой внешней точкой входа, а User Service предоставляет API регистрации, аутентификации и работы с профилем.
+
+При появлении нескольких frontend-клиентов с различающимися требованиями отдельный BFF может быть добавлен перед внутренними сервисами.
+
+---
+
+# Kubernetes namespace
+
+Все основные компоненты приложения разворачиваются в namespace:
+
+```text
+m
+```
+
+Проверить namespace:
+
+```bash
+kubectl get namespace m
+```
+
+При отсутствии создать:
+
+```bash
+kubectl create namespace m
+```
 
 ---
 
@@ -173,13 +364,11 @@ Kibana используется для поиска, фильтрации и в�
 
 ## 1. Запуск Kubernetes
 
-Запустить Minikube:
-
 ```bash
 minikube start --driver=docker
 ```
 
-Проверить состояние:
+Проверить:
 
 ```bash
 kubectl get nodes
@@ -189,17 +378,19 @@ kubectl get nodes
 
 ## 2. NGINX Ingress Controller
 
-Добавить Helm-репозиторий:
+NGINX Ingress Controller используется как внешняя точка входа/API Gateway.
+
+Добавить Helm repository:
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
 ```
 
-Установить NGINX Ingress Controller:
+Установить:
 
 ```bash
-helm install nginx ingress-nginx/ingress-nginx \
+helm upgrade --install nginx ingress-nginx/ingress-nginx \
   --namespace m \
   --create-namespace \
   --set controller.metrics.enabled=true \
@@ -213,80 +404,116 @@ kubectl get pods -n m
 kubectl get svc -n m
 ```
 
-Для сбора метрик NGINX Ingress Controller должен предоставлять metrics endpoint на порту `10254`.
+Отдельный API Gateway не устанавливается.
 
 ---
 
-## 3. Установка PostgreSQL
+## 3. PostgreSQL Secret
 
-Добавить Helm-репозиторий Bitnami:
-
-```bash
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo update
-```
-
-Создать Secret с данными подключения:
+Применить Secret с параметрами PostgreSQL:
 
 ```bash
-kubectl apply -f k8s/01-secret.yaml
+kubectl apply -f k8s/01-secret.yaml -n m
 ```
+
+---
+
+## 4. PostgreSQL
 
 Установить PostgreSQL:
 
 ```bash
-helm install user-service-postgres \
-  bitnami/postgresql \
-  -f k8s/postgres-values.yaml
-```
-
-Дождаться запуска PostgreSQL:
-
-```bash
-kubectl wait \
-  --for=condition=Ready \
-  pod \
-  -l app.kubernetes.io/instance=user-service-postgres \
-  --timeout=180s
+helm upgrade --install user-service \
+  oci://registry-1.docker.io/bitnamicharts/postgresql \
+  -f k8s/postgres-values.yaml \
+  -n m
 ```
 
 Проверить:
 
 ```bash
-kubectl get pods
+kubectl get pods -n m
+```
+
+Дождаться состояния:
+
+```text
+Running
+```
+
+PostgreSQL доступен внутри Kubernetes как:
+
+```text
+user-service-postgresql
 ```
 
 ---
 
-## 4. Первоначальная миграция
+## 5. ConfigMap
 
-Создать ConfigMap приложения и ConfigMap с SQL-миграцией:
-
-```bash
-kubectl apply -f k8s/02-configmap.yaml
-kubectl apply -f k8s/03-migration-configmap.yaml
-```
-
-Запустить migration Job:
+Применить конфигурацию приложения и SQL migration:
 
 ```bash
-kubectl apply -f k8s/04-migration-job.yaml
+kubectl apply -f k8s/02-configmap.yaml -n m
+kubectl apply -f k8s/03-migration-configmap.yaml -n m
 ```
 
-Дождаться успешного завершения:
+---
+
+## 6. JWT Secret
+
+JWT signing key хранится отдельно в Kubernetes Secret.
+
+Создать его необходимо один раз:
+
+```bash
+kubectl get secret user-service-jwt-secret -n m >/dev/null 2>&1 || \
+kubectl create secret generic user-service-jwt-secret \
+  --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
+  -n m
+```
+
+При обычном обновлении приложения Secret не следует генерировать заново, так как после смены signing key ранее выданные JWT перестанут проходить проверку.
+
+Проверить наличие Secret:
+
+```bash
+kubectl get secret user-service-jwt-secret -n m
+```
+
+---
+
+## 7. Database migration
+
+При повторном развертывании удалить предыдущий Job:
+
+```bash
+kubectl delete job user-service-migration \
+  -n m \
+  --ignore-not-found
+```
+
+Запустить migration:
+
+```bash
+kubectl apply -f k8s/04-migration-job.yaml -n m
+```
+
+Дождаться завершения:
 
 ```bash
 kubectl wait \
   --for=condition=complete \
   job/user-service-migration \
+  -n m \
   --timeout=120s
 ```
 
 Проверить:
 
 ```bash
-kubectl get jobs
-kubectl logs job/user-service-migration
+kubectl get jobs -n m
+kubectl logs job/user-service-migration -n m
 ```
 
 Job должен иметь статус:
@@ -295,85 +522,71 @@ Job должен иметь статус:
 Complete
 ```
 
-Migration Job пишет структурированные JSON-логи начала и окончания миграции.
-
-Пример:
-
-```json
-{
-  "level": "INFO",
-  "service": "user-service-migration",
-  "message": "Database migration started"
-}
-```
-
-```json
-{
-  "level": "INFO",
-  "service": "user-service-migration",
-  "message": "Database migration completed"
-}
-```
-
 ---
 
-## 5. Запуск User Service
+## 8. User Service
 
-Применить Deployment, Service и Ingress:
+Применить Deployment:
 
 ```bash
-kubectl apply -f k8s/05-deployment.yaml
-kubectl apply -f k8s/06-service.yaml
-kubectl apply -f k8s/07-ingress.yaml
+kubectl apply -f k8s/05-deployment.yaml -n m
+```
+
+Применить Service:
+
+```bash
+kubectl apply -f k8s/06-service.yaml -n m
+```
+
+Применить Ingress:
+
+```bash
+kubectl apply -f k8s/07-ingress.yaml -n m
 ```
 
 Проверить:
 
 ```bash
-kubectl get pods
-kubectl get svc
-kubectl get ingress
+kubectl get pods -n m
+kubectl get svc -n m
+kubectl get ingress -n m
 ```
 
-Deployment запускает две реплики приложения.
-
-Оба pod должны находиться в состоянии:
-
-```text
-READY   STATUS
-1/1     Running
-```
-
-Проверить используемый Docker image:
-
-```bash
-kubectl get pods -l app=user-service \
-  -o jsonpath='{range .items[*]}{.metadata.name}{" -> "}{.spec.containers[0].image}{"\n"}{end}'
-```
+Deployment запускает две реплики User Service.
 
 ---
 
-## 6. Доступ через Ingress
+# Доступ через Ingress
 
-Добавить в `/etc/hosts`:
+Добавить в:
+
+```text
+/etc/hosts
+```
+
+строку:
 
 ```text
 127.0.0.1 arch.homework
 ```
 
-Запустить Minikube tunnel в отдельном терминале:
+Запустить в отдельном терминале:
 
 ```bash
 minikube tunnel
 ```
 
-Проверить приложение:
+Проверить:
 
 ```bash
-curl http://arch.homework/health/
+curl -i http://arch.homework/health/
 ```
 
 Ожидаемый ответ:
+
+```http
+HTTP/1.1 200 OK
+```
 
 ```json
 {
@@ -381,23 +594,18 @@ curl http://arch.homework/health/
 }
 ```
 
-Проверить API:
-
-```bash
-curl http://arch.homework/users
-```
-
 ---
 
-# CRUD API
+# Authentication API
 
-## Создание пользователя
+## Регистрация пользователя
 
 ```bash
-curl -X POST http://arch.homework/users \
+curl -i -X POST http://arch.homework/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "username": "otus-user",
+    "password": "Password123!",
     "firstName": "Otus",
     "lastName": "Student",
     "email": "otus-user@example.com",
@@ -405,37 +613,65 @@ curl -X POST http://arch.homework/users \
   }'
 ```
 
-Успешный ответ:
+Ожидаемый статус:
 
 ```text
-HTTP 201 Created
+201 Created
 ```
+
+Пароль в response не возвращается.
 
 ---
 
-## Получение пользователя
+## Login
 
 ```bash
-curl http://arch.homework/users/1
-```
-
----
-
-## Получение списка пользователей
-
-```bash
-curl http://arch.homework/users
-```
-
----
-
-## Обновление пользователя
-
-```bash
-curl -X PUT http://arch.homework/users/1 \
+curl -i -X POST http://arch.homework/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "otus-user",
+    "password": "Password123!"
+  }'
+```
+
+Пример ответа:
+
+```json
+{
+  "accessToken": "<JWT>"
+}
+```
+
+---
+
+## Получение профиля
+
+```bash
+curl -i http://arch.homework/profile \
+  -H "Authorization: Bearer <JWT>"
+```
+
+Без JWT:
+
+```text
+401 Unauthorized
+```
+
+С корректным JWT:
+
+```text
+200 OK
+```
+
+---
+
+## Изменение профиля
+
+```bash
+curl -i -X PUT http://arch.homework/profile \
+  -H "Authorization: Bearer <JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{
     "firstName": "Otus Updated",
     "lastName": "Student Updated",
     "email": "otus-user-updated@example.com",
@@ -443,657 +679,161 @@ curl -X PUT http://arch.homework/users/1 \
   }'
 ```
 
----
-
-## Удаление пользователя
-
-```bash
-curl -X DELETE http://arch.homework/users/1
-```
-
-Успешный ответ:
+Ожидаемый статус:
 
 ```text
-HTTP 204 No Content
+200 OK
 ```
-
----
-
-# Мониторинг
-
-## Метрики User Service
-
-Приложение использует Spring Boot Actuator и Micrometer для экспорта метрик в формате Prometheus.
-
-Endpoint:
-
-```text
-/actuator/prometheus
-```
-
-Prometheus собирает метрики непосредственно с pod'ов User Service.
-
-Основная HTTP-метрика:
-
-```text
-http_server_requests_seconds
-```
-
-Она используется для построения:
-
-- RPS по API;
-- latency;
-- количества HTTP 5xx ошибок.
-
-Системный endpoint `/actuator/prometheus` исключается из прикладных графиков, чтобы запросы самого Prometheus не влияли на статистику API.
-
----
-
-## Метрики NGINX Ingress
-
-NGINX Ingress Controller экспортирует собственные Prometheus-метрики.
-
-Используемые метрики:
-
-```text
-nginx_ingress_controller_requests
-nginx_ingress_controller_request_duration_seconds
-```
-
-На их основе отображаются:
-
-- RPS через Ingress;
-- latency Ingress;
-- HTTP 5xx error rate.
-
----
-
-# Prometheus и Grafana
-
-Prometheus и Grafana используются для мониторинга приложения и Ingress Controller.
-
-Проверить запущенные компоненты мониторинга:
-
-```bash
-kubectl get pods -n monitoring
-kubectl get svc -n monitoring
-```
-
-Для локального доступа к Grafana:
-
-```bash
-kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
-```
-
-После этого Grafana доступна по адресу:
-
-```text
-http://localhost:3000
-```
-
-Prometheus используется в Grafana в качестве datasource.
-
----
-
-# Grafana Dashboard
-
-Создан dashboard:
-
-```text
-User-service
-```
-
-Dashboard содержит следующие панели.
-
-## User Service
-
-- `User Service — RPS by API`
-- `User Service — Latency by API`
-- `User Service — 500 Error Rate by API`
-
-Метрики группируются по API и HTTP method.
-
-## NGINX Ingress
-
-- `NGINX Ingress — RPS`
-- `NGINX Ingress — Latency`
-- `NGINX Ingress — 500 Error Rate`
-
-Таким образом можно отдельно наблюдать поведение самого приложения и входящего трафика через Ingress.
-
-### RPS приложения
-
-```promql
-sum by (method, uri) (
-  rate(
-    http_server_requests_seconds_count{
-      job="user-service",
-      uri!="/actuator/prometheus"
-    }[1m]
-  )
-)
-```
-
-### HTTP 500 приложения
-
-```promql
-sum by (method, uri) (
-  rate(
-    http_server_requests_seconds_count{
-      job="user-service",
-      status=~"5..",
-      uri!="/actuator/prometheus"
-    }[1m]
-  )
-)
-```
-
-### NGINX Ingress RPS
-
-```promql
-sum(
-  rate(
-    nginx_ingress_controller_requests{
-      ingress="user-service-ingress"
-    }[1m]
-  )
-)
-```
-
----
-
-# Alerting
-
-В Grafana настроен alert:
-
-```text
-User Service — High Error Rate
-```
-
-Alert отслеживает появление HTTP `5xx` ответов User Service.
-
-PromQL:
-
-```promql
-sum(
-  rate(
-    http_server_requests_seconds_count{
-      job="user-service",
-      status=~"5..",
-      uri!="/actuator/prometheus"
-    }[1m]
-  )
-) or vector(0)
-```
-
-Условие:
-
-```text
-value > 0
-```
-
-Pending period:
-
-```text
-1m
-```
-
-Если сервис продолжает возвращать `5xx` ошибки в течение заданного периода, alert переходит в состояние:
-
-```text
-Firing
-```
-
-Для учебного окружения используется тестовый contact point `empty`, поэтому реальная отправка уведомлений во внешнюю систему не выполняется.
-
----
-
-# Централизованное логирование
-
-Для централизованного сбора и анализа логов используется стек EFK:
-
-- Elasticsearch — хранение и поиск логов;
-- Fluent Bit — сбор и доставка логов Kubernetes;
-- Kibana — поиск, фильтрация и визуализация.
-
----
-
-## Structured logging
-
-User Service пишет структурированные JSON-логи в `stdout`.
-
-Для этого используется встроенная поддержка structured logging Spring Boot.
-
-Конфигурация:
-
-```yaml
-logging:
-  structured:
-    format:
-      console: logstash
-```
-
-Логируются:
-
-- запуск приложения — `INFO`;
-- остановка приложения — `INFO`;
-- входящие HTTP-запросы — `INFO`;
-- успешное создание пользователя — `INFO`;
-- успешное обновление пользователя — `INFO`;
-- успешное удаление пользователя — `INFO`;
-- ошибки валидации — `WARN`;
-- попытки обращения к отсутствующему пользователю — `WARN`;
-- конфликты уникальных значений — `WARN`;
-- ошибки доступа к БД — `ERROR`;
-- непредвиденные ошибки приложения — `ERROR`.
-
-Spring Boot 3.5 предоставляет встроенную поддержку structured logging для console output.
-
----
-
-## Request ID
-
-Для каждого входящего HTTP-запроса генерируется уникальный:
-
-```text
-request_id
-```
-
-`request_id` помещается в MDC и автоматически присутствует в логах, созданных во время обработки запроса.
-
-Пример:
-
-```json
-{
-  "@timestamp": "2026-09-28T18:14:33.219858346Z",
-  "@version": "1",
-  "message": "Incoming HTTP request",
-  "level": "INFO",
-  "request_id": "ae0579c2-b4b9-4ce4-aae4-62beba786e77"
-}
-```
-
-Это позволяет найти все логи, относящиеся к одному HTTP-запросу.
-
----
-
-## HTTP request logging
-
-Для входящих HTTP-запросов логируются:
-
-- HTTP method;
-- request path;
-- client IP;
-- request ID.
-
-Пример сообщения:
-
-```text
-Incoming HTTP request
-```
-
-Дополнительные данные запроса передаются в structured log.
-
----
-
-## CRUD logging
-
-Успешные изменяющие CRUD-операции логируются на уровне `INFO`.
-
-Для идентификатора пользователя используется отдельное структурированное поле:
-
-```text
-user_id
-```
-
-Пример:
-
-```json
-{
-  "message": "User created",
-  "level": "INFO",
-  "user_id": 12748
-}
-```
-
-Аналогично логируются:
-
-```text
-User updated
-User deleted
-```
-
-Это позволяет искать операции конкретного пользователя непосредственно по полю `user_id`, не разбирая текст сообщения.
-
----
-
-# Migration Job logging
-
-Kubernetes migration Job также пишет структурированные JSON-логи в stdout.
-
-Лог начала миграции:
-
-```json
-{
-  "level": "INFO",
-  "service": "user-service-migration",
-  "message": "Database migration started"
-}
-```
-
-Лог успешного окончания:
-
-```json
-{
-  "level": "INFO",
-  "service": "user-service-migration",
-  "message": "Database migration completed"
-}
-```
-
-Migration Job можно найти в Kibana по:
-
-```text
-service: "user-service-migration"
-```
-
----
-
-# Elasticsearch
-
-Elasticsearch развернут в namespace:
-
-```text
-logging
-```
-
-Используется:
-
-- StatefulSet;
-- single-node configuration;
-- PersistentVolumeClaim;
-- Headless Service;
-- ClusterIP Service.
-
-Проверить:
-
-```bash
-kubectl get pods -n logging
-kubectl get svc -n logging
-kubectl get pvc -n logging
-```
-
-Для локального доступа:
-
-```bash
-kubectl port-forward -n logging svc/elasticsearch 9200:9200
-```
-
-Проверить Elasticsearch:
-
-```bash
-curl http://localhost:9200
-```
-
-Проверить индексы Fluent Bit:
-
-```bash
-curl 'http://localhost:9200/_cat/indices/fluent-bit-logs-*?v'
-```
-
-Логи хранятся в daily indices:
-
-```text
-fluent-bit-logs-YYYY.MM.DD
-```
-
-Например:
-
-```text
-fluent-bit-logs-2026.09.28
-```
-
----
-
-# Fluent Bit
-
-Fluent Bit развернут как Kubernetes `DaemonSet`.
-
-Проверить:
-
-```bash
-kubectl get daemonset -n logging
-kubectl get pods -n logging -l app=fluent-bit
-```
-
-Fluent Bit читает container logs с Kubernetes node:
-
-```text
-/var/log/containers/*.log
-```
-
-К логам добавляются Kubernetes metadata:
-
-- pod name;
-- namespace;
-- container name;
-- labels;
-- container image;
-- pod IP;
-- host.
-
-Пример Kubernetes metadata:
-
-```json
-{
-  "kubernetes": {
-    "pod_name": "user-service-844d47ffd-sknjr",
-    "namespace_name": "default",
-    "container_name": "user-service",
-    "labels": {
-      "app": "user-service"
-    }
-  }
-}
-```
-
-JSON-логи приложения объединяются с Kubernetes metadata и отправляются в Elasticsearch.
-
-Elasticsearch output настроен с:
-
-```text
-Logstash_Format On
-Logstash_Prefix fluent-bit-logs
-```
-
-Проверить логи Fluent Bit:
-
-```bash
-kubectl logs -n logging -l app=fluent-bit
-```
-
----
-
-# Kibana
-
-Kibana развернута в namespace:
-
-```text
-logging
-```
-
-Для локального доступа:
-
-```bash
-kubectl port-forward -n logging svc/kibana 5601:5601
-```
-
-После этого Kibana доступна на:
-
-```text
-http://localhost:5601
-```
-
----
-
-## Data View
-
-Для просмотра логов создан Data View:
-
-```text
-Fluent Bit Logs
-```
-
-Index pattern:
-
-```text
-fluent-bit-logs-*
-```
-
-Time field:
-
-```text
-@timestamp
-```
-
----
-
-## Поиск логов User Service
-
-В Kibana Discover:
-
-```text
-kubernetes.container_name: "user-service"
-```
-
-Отображаются централизованные логи обеих реплик приложения.
-
----
-
-## Поиск WARN
-
-Для поиска ошибок валидации:
-
-```text
-kubernetes.container_name: "user-service" and level: "WARN"
-```
-
-Пример сообщения:
-
-```text
-Request validation failed
-```
-
-Лог содержит:
-
-- `level`;
-- `message`;
-- `request_id`;
-- Kubernetes metadata.
-
----
-
-## Поиск CRUD по user_id
-
-Для поиска операции конкретного пользователя:
-
-```text
-kubernetes.container_name: "user-service" and user_id: 12748
-```
-
-Пример результата:
-
-```text
-level      INFO
-message    User created
-user_id    12748
-request_id c3e7533e-8ae1-420b-a035-d0cb8f283a49
-```
-
-Поле `user_id` хранится отдельно от `message`, что позволяет использовать его для поиска и фильтрации.
-
----
-
-## Поиск migration Job
-
-```text
-service: "user-service-migration"
-```
-
-В результате отображаются:
-
-```text
-Database migration started
-Database migration completed
-```
-
----
-
-## Histogram по уровню логирования
-
-Для анализа количества логов во времени используется histogram.
-
-Фильтр:
-
-```text
-kubernetes.container_name: "user-service"
-```
-
-Breakdown:
-
-```text
-level.keyword
-```
-
-Это позволяет отдельно отображать количество логов уровней:
-
-```text
-INFO
-WARN
-ERROR
-```
-
-при их наличии за выбранный временной диапазон.
 
 ---
 
 # Postman / Newman
 
-Postman collection находится в:
+Postman collection:
 
 ```text
-postman/user-service.postman_collection.json
+postman/authentication-bff.postman_collection.json
 ```
+
+Postman environment:
+
+```text
+postman/otus-local.postman_environment.json
+```
+
+Environment содержит:
+
+```text
+baseUrl = http://arch.homework
+```
+
+Для каждого запуска коллекция генерирует уникальный `runId`.
+
+На его основе создаются уникальные:
+
+```text
+username
+email
+```
+
+поэтому тесты можно запускать повторно без конфликтов уникальности в PostgreSQL.
+
+---
+
+## Тестовый сценарий
 
 Коллекция последовательно выполняет:
 
 ```text
-Create user
-    ↓
-Get user
-    ↓
-Update user
-    ↓
-Delete user
+1. Register user1
+        ↓
+2. GET /profile without authentication → 401
+        ↓
+3. PUT /profile without authentication → 401
+        ↓
+4. Login user1
+        ↓
+5. Update user1 profile
+        ↓
+6. Get user1 profile and verify changes
+        ↓
+7. Register user2
+        ↓
+8. Login user2
+        ↓
+9. user2 → GET /users/{user1Id} → 403
+        ↓
+10. user2 → PUT /users/{user1Id} → 403
 ```
 
-ID созданного пользователя автоматически сохраняется в collection variable и используется следующими запросами.
+Logout endpoint отсутствует, поскольку используется stateless JWT authentication и серверная HTTP session не создается.
 
-Для каждого запуска генерируется уникальный `runId`, поэтому коллекцию можно запускать повторно без конфликта уникальных `username` и `email`.
+---
 
-Запуск:
+## Запуск Newman
 
 ```bash
-npx newman run postman/user-service.postman_collection.json
+npx newman run postman/authentication-bff.postman_collection.json \
+  -e postman/otus-local.postman_environment.json
 ```
 
-При успешном выполнении:
+Коллекция выводит request и response непосредственно в CLI.
+
+Успешный результат:
 
 ```text
-iterations        1   failed 0
-requests          4   failed 0
-test-scripts      4   failed 0
-assertions        7   failed 0
+iterations             1        failed 0
+requests              10        failed 0
+test-scripts          20        failed 0
+prerequest-scripts    10        failed 0
+assertions            11        failed 0
+```
+
+---
+
+# Проверка ограничения доступа
+
+## Без аутентификации
+
+```bash
+curl -i http://arch.homework/profile
+```
+
+Результат:
+
+```text
+HTTP 401 Unauthorized
+```
+
+---
+
+## Доступ к чужому пользователю
+
+При попытке аутентифицированного `user2` получить профиль `user1`:
+
+```bash
+curl -i http://arch.homework/users/<USER1_ID> \
+  -H "Authorization: Bearer <USER2_JWT>"
+```
+
+результат:
+
+```text
+HTTP 403 Forbidden
+```
+
+Аналогичное ограничение действует для изменения:
+
+```text
+PUT /users/<USER1_ID>
+```
+
+---
+
+# Docker
+
+Docker image:
+
+```text
+pelfegor/user-service:1.3.0
+```
+
+Образ собирается для:
+
+```text
+linux/amd64
+linux/arm64
+```
+
+Сборка и публикация:
+
+```bash
+./gradlew clean test bootJar
+
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t pelfegor/user-service:1.3.0 \
+  --push .
 ```
 
 ---
@@ -1124,187 +864,259 @@ k8s/
     └── 11-fluent-bit-daemonset.yaml
 ```
 
-## Основные ресурсы приложения
+Основные ресурсы:
 
 - `01-secret.yaml` — credentials PostgreSQL;
 - `02-configmap.yaml` — конфигурация User Service;
-- `03-migration-configmap.yaml` — SQL первоначальной миграции;
-- `04-migration-job.yaml` — Kubernetes Job для выполнения миграции;
-- `05-deployment.yaml` — Deployment приложения с двумя репликами;
+- `03-migration-configmap.yaml` — SQL migration;
+- `04-migration-job.yaml` — Kubernetes Job для миграции;
+- `05-deployment.yaml` — Deployment User Service;
 - `06-service.yaml` — ClusterIP Service;
 - `07-ingress.yaml` — Ingress для `arch.homework`;
-- `postgres-values.yaml` — values для PostgreSQL Helm chart.
+- `postgres-values.yaml` — PostgreSQL Helm values.
 
-## Centralized logging
-
-Ресурсы централизованного логирования находятся в:
+JWT signing key создается отдельным Kubernetes Secret:
 
 ```text
-k8s/logging/
-```
-
-Они разворачивают:
-
-- namespace `logging`;
-- Elasticsearch StatefulSet;
-- PersistentVolumeClaim для Elasticsearch;
-- Elasticsearch Headless Service;
-- Elasticsearch ClusterIP Service;
-- Kibana Deployment;
-- Kibana Service;
-- ServiceAccount для Fluent Bit;
-- RBAC для доступа Fluent Bit к Kubernetes metadata;
-- Fluent Bit ConfigMap;
-- Fluent Bit DaemonSet.
-
----
-
-# Docker
-
-Docker image:
-
-```text
-pelfegor/user-service:1.2.0
-```
-
-Образ поддерживает:
-
-```text
-linux/amd64
-linux/arm64
-```
-
-Сборка и публикация multi-platform image:
-
-```bash
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -t pelfegor/user-service:1.2.0 \
-  --push .
-```
-
-Проверить используемый Kubernetes image:
-
-```bash
-kubectl get pods -l app=user-service \
-  -o jsonpath='{range .items[*]}{.metadata.name}{" -> "}{.spec.containers[0].image}{"\n"}{end}'
+user-service-jwt-secret
 ```
 
 ---
 
-# Проверка мониторинга
+# Monitoring
 
-Для генерации нагрузки можно выполнить несколько запросов к API:
+Prometheus собирает метрики User Service и NGINX Ingress Controller.
 
-```bash
-for i in {1..20}; do
-  curl -s http://arch.homework/health/ > /dev/null
-done
+User Service endpoint:
+
+```text
+/actuator/prometheus
 ```
 
-После этого запросы отображаются в метриках NGINX Ingress.
+Основная HTTP-метрика:
 
-Для проверки alert необходимо сгенерировать HTTP `5xx` ответы приложения и поддерживать их появление дольше `Pending period`.
+```text
+http_server_requests_seconds
+```
 
-После выполнения условия alert:
+Она используется для анализа:
+
+- RPS;
+- latency;
+- HTTP 5xx.
+
+NGINX Ingress предоставляет:
+
+```text
+nginx_ingress_controller_requests
+nginx_ingress_controller_request_duration_seconds
+```
+
+---
+
+# Prometheus и Grafana
+
+Проверить компоненты:
+
+```bash
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+Для доступа к Grafana:
+
+```bash
+kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80
+```
+
+Grafana:
+
+```text
+http://localhost:3000
+```
+
+Dashboard:
+
+```text
+User-service
+```
+
+Содержит панели:
+
+```text
+User Service — RPS by API
+User Service — Latency by API
+User Service — 500 Error Rate by API
+
+NGINX Ingress — RPS
+NGINX Ingress — Latency
+NGINX Ingress — 500 Error Rate
+```
+
+---
+
+# Alerting
+
+В Grafana настроен alert:
 
 ```text
 User Service — High Error Rate
 ```
 
-переходит в состояние:
+Он отслеживает появление HTTP `5xx` ответов User Service.
+
+При сохранении ошибок в течение pending period alert переходит в:
 
 ```text
 Firing
 ```
 
-Результат можно проверить в:
+---
+
+# Централизованное логирование
+
+Для централизованного логирования используется EFK:
 
 ```text
-Grafana → Alerting → Alert rules
+User Service
+     │
+     │ stdout
+     ▼
+/var/log/containers/*.log
+     │
+     ▼
+ Fluent Bit
+     │
+     ▼
+Elasticsearch
+     │
+     ▼
+   Kibana
 ```
+
+User Service пишет structured JSON logs в `stdout`.
+
+Используется конфигурация Spring Boot:
+
+```yaml
+logging:
+  structured:
+    format:
+      console: logstash
+```
+
+Для каждого HTTP request создается:
+
+```text
+request_id
+```
+
+Он помещается в MDC и используется для связывания логов одного запроса.
 
 ---
 
-# Проверка централизованного логирования
+# Elasticsearch
 
-## Проверить компоненты EFK
+Elasticsearch работает в namespace:
+
+```text
+logging
+```
+
+Проверить:
 
 ```bash
 kubectl get pods -n logging
 kubectl get svc -n logging
-kubectl get daemonset -n logging
-kubectl get statefulset -n logging
 kubectl get pvc -n logging
 ```
 
-## Проверить Elasticsearch
-
-Запустить:
+Локальный доступ:
 
 ```bash
 kubectl port-forward -n logging svc/elasticsearch 9200:9200
 ```
 
-В другом терминале:
+Проверка:
 
 ```bash
 curl http://localhost:9200
 ```
 
-Проверить индексы:
+Индексы:
 
 ```bash
 curl 'http://localhost:9200/_cat/indices/fluent-bit-logs-*?v'
 ```
 
-## Проверить Kibana
+---
+
+# Fluent Bit
+
+Fluent Bit работает как Kubernetes DaemonSet и читает:
+
+```text
+/var/log/containers/*.log
+```
+
+К логам добавляются Kubernetes metadata:
+
+- pod name;
+- namespace;
+- container name;
+- labels;
+- container image;
+- pod IP;
+- host.
+
+Проверить:
+
+```bash
+kubectl get daemonset -n logging
+kubectl get pods -n logging -l app=fluent-bit
+```
+
+---
+
+# Kibana
+
+Локальный доступ:
 
 ```bash
 kubectl port-forward -n logging svc/kibana 5601:5601
 ```
 
-Открыть:
+Kibana:
 
 ```text
 http://localhost:5601
 ```
 
-## Сгенерировать INFO лог
+Data View:
 
-```bash
-curl http://arch.homework/users
+```text
+Fluent Bit Logs
 ```
 
-## Сгенерировать WARN лог
+Index pattern:
 
-```bash
-curl -X POST http://arch.homework/users \
-  -H "Content-Type: application/json" \
-  -d '{}'
+```text
+fluent-bit-logs-*
 ```
 
-После этого в Kibana Discover можно выполнить:
+Для поиска логов User Service:
+
+```text
+kubernetes.container_name: "user-service"
+```
+
+Для поиска WARN:
 
 ```text
 kubernetes.container_name: "user-service" and level: "WARN"
 ```
 
-## Сгенерировать CRUD лог с user_id
-
-```bash
-curl -X POST http://arch.homework/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "kibana-test",
-    "firstName": "Kibana",
-    "lastName": "Test",
-    "email": "kibana-test@example.com",
-    "phone": "+79991112233"
-  }'
-```
-
-Полученный `id` можно использовать для поиска:
+Для поиска операций пользователя:
 
 ```text
 kubernetes.container_name: "user-service" and user_id: <USER_ID>
@@ -1312,32 +1124,57 @@ kubernetes.container_name: "user-service" and user_id: <USER_ID>
 
 ---
 
+# Проверка состояния Kubernetes
+
+```bash
+kubectl get pods -n m
+kubectl get svc -n m
+kubectl get ingress -n m
+kubectl get jobs -n m
+```
+
+Ожидается:
+
+```text
+NGINX Ingress Controller    Running
+User Service Pod 1          Running
+User Service Pod 2          Running
+PostgreSQL                  Running
+Migration Job               Complete
+```
+
+---
+
 # Удаление ресурсов
 
-## Удалить приложение
+## User Service
 
 ```bash
-kubectl delete -f k8s/07-ingress.yaml
-kubectl delete -f k8s/06-service.yaml
-kubectl delete -f k8s/05-deployment.yaml
-kubectl delete -f k8s/04-migration-job.yaml
-kubectl delete -f k8s/03-migration-configmap.yaml
-kubectl delete -f k8s/02-configmap.yaml
+kubectl delete -f k8s/07-ingress.yaml -n m
+kubectl delete -f k8s/06-service.yaml -n m
+kubectl delete -f k8s/05-deployment.yaml -n m
+kubectl delete -f k8s/04-migration-job.yaml -n m
+kubectl delete -f k8s/03-migration-configmap.yaml -n m
+kubectl delete -f k8s/02-configmap.yaml -n m
 ```
 
-## Удалить PostgreSQL
+## PostgreSQL
 
 ```bash
-helm uninstall user-service-postgres
+helm uninstall user-service -n m
 ```
-
-Удалить Secret:
 
 ```bash
-kubectl delete -f k8s/01-secret.yaml
+kubectl delete -f k8s/01-secret.yaml -n m
 ```
 
-## Удалить centralized logging
+## JWT Secret
+
+```bash
+kubectl delete secret user-service-jwt-secret -n m
+```
+
+## Centralized logging
 
 ```bash
 kubectl delete -f k8s/logging/11-fluent-bit-daemonset.yaml
@@ -1353,15 +1190,13 @@ kubectl delete -f k8s/logging/02-elasticsearch-headless-service.yaml
 kubectl delete -f k8s/logging/01-namespace.yaml
 ```
 
-## Удалить monitoring stack
-
-При необходимости:
+## Monitoring
 
 ```bash
 helm uninstall prometheus -n monitoring
 ```
 
-## Остановить Minikube
+## Minikube
 
 ```bash
 minikube stop

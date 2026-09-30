@@ -6,6 +6,7 @@ CREATE TABLE users
     last_name  VARCHAR(100) NOT NULL,
     email      VARCHAR(255) NOT NULL,
     phone      VARCHAR(50),
+    password   VARCHAR(255),
 
     CONSTRAINT uk_users_username UNIQUE (username),
     CONSTRAINT uk_users_email UNIQUE (email)

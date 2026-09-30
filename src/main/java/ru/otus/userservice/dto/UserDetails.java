@@ -1,6 +1,8 @@
 package ru.otus.userservice.dto;
 
-public record UserResponse(
+import ru.otus.userservice.entity.User;
+
+public record UserDetails(
         Long id,
         String username,
         String firstName,
@@ -9,8 +11,8 @@ public record UserResponse(
         String phone
 ) {
 
-    public static UserResponse from(UserDetails user) {
-        return new UserResponse(
+    public static UserDetails from(User user) {
+        return new UserDetails(
                 user.id(),
                 user.username(),
                 user.firstName(),
