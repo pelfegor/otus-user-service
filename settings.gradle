@@ -1,1 +1,2 @@
-rootProject.name = 'user-service'
+rootProject.name = 'docker-health-service'
+include 'user-service', 'order-service', 'billing-service', 'notification-service', 'event-contracts', 'service-common'

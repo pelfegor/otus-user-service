@@ -1,6 +1,9 @@
-# User Service
+# OTUS Microservice Architecture — User Service and Stream Processing
 
-REST API для управления пользователями с аутентификацией и авторизацией на основе JWT.
+Репозиторий объединяет предыдущую домашнюю работу User Service и завершённую домашнюю работу Stream Processing с Billing, Order и Notification services.
+
+Краткая схема выбранной Event Collaboration архитектуры находится в [docs/architecture.md](docs/architecture.md); актуальные HTTP и Kafka IDL — в [OpenAPI](docs/openapi.yaml) и [AsyncAPI](docs/asyncapi.yaml).
+
 
 Приложение развертывается в Kubernetes, использует PostgreSQL, NGINX Ingress Controller в качестве внешней точки входа, Prometheus/Grafana для мониторинга и Elasticsearch/Fluent Bit/Kibana для централизованного логирования.
 
@@ -410,11 +413,15 @@ kubectl get svc -n m
 
 ## 3. PostgreSQL Secret
 
-Применить Secret с параметрами PostgreSQL:
+Секреты не хранятся в репозитории. Создайте их один раз из локальных переменных окружения:
 
 ```bash
-kubectl apply -f k8s/01-secret.yaml -n m
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+export JWT_SECRET="$(openssl rand -hex 32)"
+./k8s/create-secrets.sh
 ```
+
+Сохраните эти значения вне Git и используйте тот же JWT secret при последующих обновлениях.
 
 ---
 
@@ -464,16 +471,7 @@ kubectl apply -f k8s/03-migration-configmap.yaml -n m
 
 JWT signing key хранится отдельно в Kubernetes Secret.
 
-Создать его необходимо один раз:
-
-```bash
-kubectl get secret user-service-jwt-secret -n m >/dev/null 2>&1 || \
-kubectl create secret generic user-service-jwt-secret \
-  --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
-  -n m
-```
-
-При обычном обновлении приложения Secret не следует генерировать заново, так как после смены signing key ранее выданные JWT перестанут проходить проверку.
+JWT Secret создаёт `k8s/create-secrets.sh` вместе с секретом PostgreSQL. Не меняйте его при обычном обновлении приложения, иначе ранее выданные токены перестанут проходить проверку.
 
 Проверить наличие Secret:
 
@@ -552,7 +550,7 @@ kubectl get svc -n m
 kubectl get ingress -n m
 ```
 
-Deployment запускает две реплики User Service.
+Deployment запускает две реплики User Service. Stream Processing deployment и порядок запуска четырёх сервисов приведены в разделе [Развёртывание Stream Processing](#развёртывание-stream-processing).
 
 ---
 
@@ -812,29 +810,7 @@ PUT /users/<USER1_ID>
 
 # Docker
 
-Docker image:
-
-```text
-pelfegor/user-service:1.3.0
-```
-
-Образ собирается для:
-
-```text
-linux/amd64
-linux/arm64
-```
-
-Сборка и публикация:
-
-```bash
-./gradlew clean test bootJar
-
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -t pelfegor/user-service:1.3.0 \
-  --push .
-```
+Корневой [Dockerfile](Dockerfile) собирает отдельный образ по параметру `SERVICE`. Команды сборки для Minikube приведены ниже; для registry добавьте свой registry/tag и команду `docker push`.
 
 ---
 
@@ -842,7 +818,7 @@ docker buildx build \
 
 ```text
 k8s/
-├── 01-secret.yaml
+├── create-secrets.sh
 ├── 02-configmap.yaml
 ├── 03-migration-configmap.yaml
 ├── 04-migration-job.yaml
@@ -866,13 +842,17 @@ k8s/
 
 Основные ресурсы:
 
-- `01-secret.yaml` — credentials PostgreSQL;
+- `create-secrets.sh` — создаёт Kubernetes Secrets из переменных окружения, значения не коммитятся;
 - `02-configmap.yaml` — конфигурация User Service;
 - `03-migration-configmap.yaml` — SQL migration;
 - `04-migration-job.yaml` — Kubernetes Job для миграции;
 - `05-deployment.yaml` — Deployment User Service;
 - `06-service.yaml` — ClusterIP Service;
 - `07-ingress.yaml` — Ingress для `arch.homework`;
+- `11-kafka.yaml` — Kafka KRaft broker и topics;
+- `12-stream-services.yaml` — ConfigMaps, Deployments и Services Billing/Order/Notification;
+- `13-databases-job.yaml` — создание отдельных баз сервисов;
+- `14-stream-ingress.yaml` — маршрутизация публичных API четырёх сервисов;
 - `postgres-values.yaml` — PostgreSQL Helm values.
 
 JWT signing key создается отдельным Kubernetes Secret:
@@ -880,6 +860,200 @@ JWT signing key создается отдельным Kubernetes Secret:
 ```text
 user-service-jwt-secret
 ```
+
+---
+
+# Stream Processing
+
+## Архитектура
+
+Система состоит из четырёх сервисов с отдельными базами данных. Внешние команды выполняются по HTTP; взаимодействие бизнес-сервисов выполняется через Kafka по схеме Event Collaboration. Регистрация создаёт `UserRegistered`, создание заказа создаёт `OrderCreated`, а Billing публикует `PaymentSucceeded` или `PaymentFailed`. User/Order/Billing используют transactional outbox. Consumer groups Order и Notification независимы.
+
+Полные схемы вариантов `0. Только HTTP`, `1. HTTP + события уведомлений`, `2. Event Collaboration` и выбранного варианта `3` с Mermaid-исходниками и изображениями SVG находятся в [docs/architecture.md](docs/architecture.md). Контракты: [OpenAPI](docs/openapi.yaml), [AsyncAPI](docs/asyncapi.yaml).
+
+![Выбранная Event Collaboration архитектура](docs/diagrams/selected-architecture.svg)
+
+## Сервисы и API
+
+| Сервис | Ответственность | Публичные маршруты | База |
+|---|---|---|---|
+| User Service | Регистрация, login, JWT, профиль | `/auth/register`, `/auth/login`, `/profile`, `/users/{id}` | `users` |
+| Billing Service | Счета, баланс, пополнение, списание и история | `/billing/accounts/me`, `/billing/accounts/me/deposit` | `billing` |
+| Order Service | Заказы и статус оплаты | `POST /orders`, `GET /orders/{id}` | `orders` |
+| Notification Service | Сохранение результатов оплаты | `GET /notifications` | `notifications` |
+
+Billing, Order и Notification валидируют подпись, срок действия и `userId` JWT с тем же `JWT_SECRET`, что и User Service. Все публичные операции определяют владельца из проверенного токена. Email для сообщений попадает в новый JWT claim при login и затем переносится через события.
+
+## Kafka topics
+
+| Topic | Producer | Consumers |
+|---|---|---|
+| `users.registered` | User Service | Billing Service (`billing-service`) |
+| `orders.created` | Order Service | Billing Service (`billing-service`) |
+| `payments.succeeded` | Billing Service | Order Service (`order-service`), Notification Service (`notification-service`) |
+| `payments.failed` | Billing Service | Order Service (`order-service`), Notification Service (`notification-service`) |
+
+События содержат UUID `eventId`, UTC `occurredAt`, Long идентификаторы, email и сумму. Суммы внутри приложений хранятся как `BigDecimal` / `NUMERIC(19,2)`. Billing использует уникальный order ID, Order дедуплицирует event ID и обновляет только `PENDING`, Notification имеет уникальный `event_id` и сохраняет email получателя и сумму.
+
+## Локальная сборка и тесты
+
+Из корня проекта:
+
+```bash
+./gradlew clean test
+./gradlew :user-service:bootJar :billing-service:bootJar :order-service:bootJar :notification-service:bootJar
+```
+
+Testcontainers-тесты Billing проверяют создание счёта, пополнение, ошибки суммы, достаточный/недостаточный баланс, повторный order ID, два конкурентных списания и отсутствующий счёт на PostgreSQL. Notification интеграционно проверяет уникальность и фильтр пользователя. Остальные User, Order, Notification service и JWT security тесты запускаются в том же `test`.
+
+## Docker build
+
+Соберите четыре отдельных образа. Для локального Minikube можно собирать образы непосредственно в Docker daemon Minikube:
+
+```bash
+minikube start --driver=docker
+eval "$(minikube docker-env)"
+docker build -t user-service:stream-processing --build-arg SERVICE=user-service --build-arg HTTP_PORT=8000 .
+docker build -t billing-service:stream-processing --build-arg SERVICE=billing-service --build-arg HTTP_PORT=8001 .
+docker build -t order-service:stream-processing --build-arg SERVICE=order-service --build-arg HTTP_PORT=8002 .
+docker build -t notification-service:stream-processing --build-arg SERVICE=notification-service --build-arg HTTP_PORT=8003 .
+```
+
+Корневой Dockerfile использует Gradle multi-module build и включает общий модуль контрактов и JWT/outbox. Для внешнего registry поменяйте теги на `REGISTRY/...` и отправьте каждый образ через `docker push`.
+
+**Альтернативный способ**, если образы собраны в обычном локальном Docker daemon (без `eval "$(minikube docker-env)"`):
+
+```bash
+docker build -t user-service:stream-processing --build-arg SERVICE=user-service --build-arg HTTP_PORT=8000 .
+minikube image load user-service:stream-processing
+minikube image ls | grep user-service
+```
+
+Аналогично загрузите образы Billing, Order и Notification, если собирали их вне Minikube. Убедитесь, что Deployment использует тег `*:stream-processing` и `imagePullPolicy: IfNotPresent`. Не смешивайте способы сборки без проверки текущего Docker context/daemon.
+
+## Развёртывание Kubernetes
+
+Манифесты используют namespace `m`. Существующий PostgreSQL Helm release и logging/monitoring ресурсы сохраняются. Все команды `kubectl` ниже указывают namespace явно. Система развертывается в Minikube без удаления существующих ресурсов.
+
+1. Создайте namespace и секреты. Секреты сохраняйте вне Git и между обновлениями используйте прежние значения:
+
+```bash
+minikube start --driver=docker
+kubectl get namespace m >/dev/null 2>&1 || kubectl create namespace m
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+export JWT_SECRET="$(openssl rand -hex 32)"
+./k8s/create-secrets.sh
+```
+
+2. Установите NGINX Ingress и PostgreSQL:
+
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm upgrade --install nginx ingress-nginx/ingress-nginx --namespace m --create-namespace
+helm upgrade --install user-service oci://registry-1.docker.io/bitnamicharts/postgresql \
+  -f k8s/postgres-values.yaml --namespace m
+kubectl rollout status statefulset/user-service-postgresql --namespace m --timeout=300s
+```
+
+3. Разверните Kafka и создайте topics:
+
+```bash
+kubectl apply -f k8s/11-kafka.yaml --namespace m
+kubectl rollout status statefulset/kafka --namespace m --timeout=300s
+kubectl wait --for=condition=complete job/kafka-topics --namespace m --timeout=180s
+```
+
+4. Примените ConfigMaps и создайте три отдельные базы Billing, Order, Notification. User база `users` создаётся PostgreSQL Helm values:
+
+```bash
+kubectl apply -f k8s/02-configmap.yaml --namespace m
+kubectl apply -f k8s/03-migration-configmap.yaml --namespace m
+kubectl apply -f k8s/12-stream-services.yaml --namespace m
+kubectl apply -f k8s/13-databases-job.yaml --namespace m
+kubectl wait --for=condition=complete job/stream-processing-databases --namespace m --timeout=180s
+```
+
+5. Создайте/обновите пользовательскую миграцию и приложения:
+
+```bash
+kubectl delete job user-service-migration --namespace m --ignore-not-found
+kubectl apply -f k8s/04-migration-job.yaml --namespace m
+kubectl wait --for=condition=complete job/user-service-migration --namespace m --timeout=180s
+kubectl apply -f k8s/05-deployment.yaml --namespace m
+kubectl apply -f k8s/06-service.yaml --namespace m
+kubectl apply -f k8s/07-ingress.yaml --namespace m
+kubectl apply -f k8s/14-stream-ingress.yaml --namespace m
+kubectl rollout status deployment/user-service --namespace m --timeout=300s
+kubectl rollout status deployment/billing-service --namespace m --timeout=300s
+kubectl rollout status deployment/order-service --namespace m --timeout=300s
+kubectl rollout status deployment/notification-service --namespace m --timeout=300s
+```
+
+6. Добавьте в `/etc/hosts` запись `127.0.0.1 arch.homework`, запустите `minikube tunnel` и проверьте:
+
+```bash
+curl -i http://arch.homework/health/
+kubectl get pods,services,ingress -n m
+```
+
+Пробы сервисов используют `/health/` или Actuator readiness/liveness. Kafka в учебной конфигурации — один KRaft broker с временным `emptyDir`; PostgreSQL остаётся на существующем persistent Helm volume.
+
+## Postman / Newman: сквозной сценарий
+
+Коллекция [stream-processing.postman_collection.json](postman/stream-processing.postman_collection.json) и environment [stream-processing.postman_environment.json](postman/stream-processing.postman_environment.json) по умолчанию используют `http://arch.homework`. Запуск из корня:
+
+```bash
+./postman/run-stream-processing.sh
+```
+
+Коллекция генерирует уникальные username/email, сохраняет JWT и order IDs, ждёт асинхронные результаты polling-запросами с пределом 30 попыток. Runner задерживает каждый запрос на 1 секунду и печатает request/response headers, тела и статусы.
+
+Сценарий проверяет создание Billing-счёта после регистрации, пополнение на 1500, списание 700, остаток 800, положительное уведомление, затем заказ на 2000, неизменный остаток 800 и отрицательное уведомление с причиной `INSUFFICIENT_BALANCE`.
+
+Последний проверенный E2E-прогон (12 октября 2026 года) через NGINX Ingress завершился успешно: **1 итерация, 45 HTTP-запросов, 40 assertions, 0 ошибок, 4,8 секунды**. Число запросов зависит от количества polling-повторов.
+
+Прямой запуск коллекции:
+
+```bash
+npx newman run postman/stream-processing.postman_collection.json \
+  -e postman/stream-processing.postman_environment.json \
+  --timeout-request 15000
+```
+
+В проверенном прогоне были подтверждены регистрация, создание счёта через событие, пополнение, успешное списание ровно один раз, уведомление об успехе, отказ при недостатке средств, неизменность баланса и уведомление об отказе. Это подтверждает E2E-сценарии, но не является отдельным тестом восстановления после сбоев или всех сценариев дублирования событий.
+
+## Диагностика Outbox и Kafka
+
+User Service использует transactional outbox: после регистрации запись о событии `users.registered` попадает в таблицу `users.outbox_events`, а фоновый publisher отправляет её в Kafka. **Перед E2E-тестом необходимо выполнить `k8s/04-migration-job.yaml`**, включающий `V2__create_outbox.sql`. Убедитесь, что `user-service-config` содержит `KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"`.
+
+```bash
+kubectl get configmap user-service-config -n m -o yaml
+kubectl get jobs -n m
+kubectl logs -n m job/user-service-migration
+kubectl logs -n m deployment/user-service --since=5m --tail=100
+```
+
+Если в логах появляется `ERROR: relation "outbox_events" does not exist`, проверьте, что SQL ConfigMap обновлён и миграционный Job был **запущен заново после обновления SQL**. Уже завершённый Kubernetes Job не выполняется повторно от `kubectl apply`:
+
+```bash
+kubectl apply -n m -f k8s/03-migration-configmap.yaml
+kubectl delete job user-service-migration -n m --ignore-not-found
+kubectl apply -n m -f k8s/04-migration-job.yaml
+kubectl wait -n m --for=condition=complete job/user-service-migration --timeout=180s
+kubectl logs -n m job/user-service-migration
+```
+
+Эти команды удаляют только объект Job, а не PostgreSQL и не данные пользователей. При ошибках миграции проверьте логи перед повторной попыткой. После успешной миграции можно повторить Newman.
+
+## Известные ограничения
+
+- Kafka развёрнута одним брокером без TLS/SASL и без постоянного volume; это конфигурация локальной учебной среды.
+- Consumer повторяет обработку до четырёх раз с интервалом в секунду после первой попытки; после исчерпания попыток сообщение публикуется в соответствующий `.DLT` topic. Для заказа без billing-счёта Billing после этих попыток публикует `PaymentFailed` с причиной `ACCOUNT_NOT_FOUND` через transactional outbox.
+- Outbox rows хранятся после публикации; для production нужно добавить политику очистки и наблюдение за lag/числом retry.
+- PostgreSQL базы логически разделены в одном PostgreSQL deployment; для этого задания они не вынесены в отдельные кластеры.
+- Notification Service сохраняет email получателя, сумму, тему и текст email-уведомления, а API возвращает эти данные. Фактическая SMTP-отправка в рамках проекта не настроена.
+- Event Collaboration обеспечивает eventual consistency: после POST регистрации/заказа счет и итоговый статус могут появиться позже.
 
 ---
 
@@ -1131,6 +1305,7 @@ kubectl get pods -n m
 kubectl get svc -n m
 kubectl get ingress -n m
 kubectl get jobs -n m
+kubectl get deployments,statefulsets -n m
 ```
 
 Ожидается:
@@ -1139,8 +1314,14 @@ kubectl get jobs -n m
 NGINX Ingress Controller    Running
 User Service Pod 1          Running
 User Service Pod 2          Running
+Billing Service             Running
+Order Service               Running
+Notification Service        Running
+Kafka broker                Running
 PostgreSQL                  Running
 Migration Job               Complete
+Kafka topics Job            Complete
+Stream databases Job        Complete
 ```
 
 ---
@@ -1165,7 +1346,7 @@ helm uninstall user-service -n m
 ```
 
 ```bash
-kubectl delete -f k8s/01-secret.yaml -n m
+kubectl delete secret user-service-db-secret -n m
 ```
 
 ## JWT Secret

@@ -1,0 +1,637 @@
+{
+  "info": {
+    "_postman_id": "a4d01f04-c6af-4ee1-a456-2e2c71a97cef",
+    "name": "OTUS Stream Processing \u2014 Event Collaboration",
+    "description": "End-to-end registration, asynchronous billing, orders, balance checks, and both notification outcomes. Polls asynchronous consumers for up to 30 attempts; each request is delayed by the runner script.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://arch.homework"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "paidOrderId",
+      "value": ""
+    },
+    {
+      "key": "failedOrderId",
+      "value": ""
+    },
+    {
+      "key": "accountPollAttempts",
+      "value": "0"
+    },
+    {
+      "key": "paidOrderPollAttempts",
+      "value": "0"
+    },
+    {
+      "key": "successNotificationPollAttempts",
+      "value": "0"
+    },
+    {
+      "key": "failedOrderPollAttempts",
+      "value": "0"
+    },
+    {
+      "key": "failureNotificationPollAttempts",
+      "value": "0"
+    }
+  ],
+  "item": [
+    {
+      "name": "Register user",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Stream\",\n  \"lastName\": \"Student\",\n  \"email\": \"{{email}}\",\n  \"phone\": \"+79990000001\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const runId = Date.now().toString() + \"-\" + Math.floor(Math.random() * 1000000).toString();",
+              "pm.collectionVariables.set(\"runId\", runId);",
+              "pm.collectionVariables.set(\"username\", \"stream-\" + runId);",
+              "pm.collectionVariables.set(\"email\", \"stream-\" + runId + \"@example.com\");",
+              "pm.collectionVariables.set(\"password\", \"Password123!\");",
+              "pm.collectionVariables.set(\"accountPollAttempts\", \"0\");",
+              "pm.collectionVariables.set(\"paidOrderPollAttempts\", \"0\");",
+              "pm.collectionVariables.set(\"successNotificationPollAttempts\", \"0\");",
+              "pm.collectionVariables.set(\"failedOrderPollAttempts\", \"0\");",
+              "pm.collectionVariables.set(\"failureNotificationPollAttempts\", \"0\");"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"registration returns 201 Created\", function () { pm.response.to.have.status(201); });",
+              "const user = pm.response.json();",
+              "pm.expect(user.id).to.be.a(\"number\");",
+              "pm.collectionVariables.set(\"userId\", String(user.id));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"login returns 200\", function () { pm.response.to.have.status(200); });",
+              "const result = pm.response.json();",
+              "pm.expect(result.accessToken).to.be.a(\"string\").and.not.empty;",
+              "pm.collectionVariables.set(\"accessToken\", result.accessToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wait for billing account",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const tries = Number(pm.collectionVariables.get(\"accountPollAttempts\") || \"0\") + 1;",
+              "pm.collectionVariables.set(\"accountPollAttempts\", String(tries));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  const account = pm.response.json();",
+              "  pm.test(\"billing account belongs to registered user\", function () {",
+              "    pm.expect(account.userId).to.eql(Number(pm.collectionVariables.get(\"userId\")));",
+              "    pm.expect(account.balance).to.eql(0);",
+              "  });",
+              "  pm.execution.setNextRequest(\"Deposit balance\");",
+              "} else if (pm.response.code === 404 && Number(pm.collectionVariables.get(\"accountPollAttempts\")) < 30) {",
+              "  pm.execution.setNextRequest(\"Wait for billing account\");",
+              "} else {",
+              "  pm.test(\"billing account is created within 30 attempts\", function () { pm.expect(pm.response.code).to.eql(200); });",
+              "  pm.execution.setNextRequest(null);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Deposit balance",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me/deposit",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me",
+            "deposit"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1500.0\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"deposit returns 200\", function () { pm.response.to.have.status(200); });",
+              "const account = pm.response.json();",
+              "pm.test(\"deposit increases the balance\", function () { pm.expect(account.balance).to.eql(1500); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create affordable order",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"price\": 700.0\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order creation returns 202 Accepted\", function () { pm.response.to.have.status(202); });",
+              "const order = pm.response.json();",
+              "pm.expect(order.id).to.be.a(\"number\");",
+              "pm.expect(order.status).to.eql(\"PENDING\");",
+              "pm.collectionVariables.set(\"paidOrderId\", String(order.id));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wait for successful payment",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{paidOrderId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{paidOrderId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const tries = Number(pm.collectionVariables.get(\"paidOrderPollAttempts\") || \"0\") + 1;",
+              "pm.collectionVariables.set(\"paidOrderPollAttempts\", String(tries));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order lookup returns 200\", function () { pm.response.to.have.status(200); });",
+              "const order = pm.response.json();",
+              "if (order.status === \"PAID\") { pm.execution.setNextRequest(\"Verify balance after success\"); }",
+              "else if (order.status === \"PENDING\" && Number(pm.collectionVariables.get(\"paidOrderPollAttempts\")) < 30) { pm.execution.setNextRequest(\"Wait for successful payment\"); }",
+              "else { pm.test(\"order reaches PAID within 30 attempts\", function () { pm.expect(order.status).to.eql(\"PAID\"); }); pm.execution.setNextRequest(null); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify balance after success",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"balance lookup returns 200\", function () { pm.response.to.have.status(200); });",
+              "pm.test(\"successful payment is charged exactly once\", function () { pm.expect(pm.response.json().balance).to.eql(800); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wait for success notification",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/notifications",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "notifications"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const tries = Number(pm.collectionVariables.get(\"successNotificationPollAttempts\") || \"0\") + 1;",
+              "pm.collectionVariables.set(\"successNotificationPollAttempts\", String(tries));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"notifications lookup returns 200\", function () { pm.response.to.have.status(200); });",
+              "const notifications = pm.response.json();",
+              "const found = notifications.find(n => Number(n.orderId) === Number(pm.collectionVariables.get(\"paidOrderId\")) && n.subject === \"Order payment succeeded\");",
+              "if (found) { pm.test(\"successful payment notification is stored\", function () { pm.expect(found.recipient).to.eql(pm.collectionVariables.get(\"email\")); pm.expect(found.amount).to.eql(700); pm.expect(found.message).to.include(\"700\"); }); pm.execution.setNextRequest(\"Create unaffordable order\"); }",
+              "else if (Number(pm.collectionVariables.get(\"successNotificationPollAttempts\")) < 30) { pm.execution.setNextRequest(\"Wait for success notification\"); }",
+              "else { pm.test(\"success notification arrives within 30 attempts\", function () { pm.expect(found).to.exist; }); pm.execution.setNextRequest(null); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create unaffordable order",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"price\": 2000.0\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"second order creation returns 202 Accepted\", function () { pm.response.to.have.status(202); });",
+              "const order = pm.response.json();",
+              "pm.expect(order.id).to.be.a(\"number\");",
+              "pm.expect(order.status).to.eql(\"PENDING\");",
+              "pm.collectionVariables.set(\"failedOrderId\", String(order.id));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wait for failed payment",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{failedOrderId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{failedOrderId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const tries = Number(pm.collectionVariables.get(\"failedOrderPollAttempts\") || \"0\") + 1;",
+              "pm.collectionVariables.set(\"failedOrderPollAttempts\", String(tries));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order lookup returns 200\", function () { pm.response.to.have.status(200); });",
+              "const order = pm.response.json();",
+              "if (order.status === \"PAYMENT_FAILED\") { pm.execution.setNextRequest(\"Verify unchanged balance\"); }",
+              "else if (order.status === \"PENDING\" && Number(pm.collectionVariables.get(\"failedOrderPollAttempts\")) < 30) { pm.execution.setNextRequest(\"Wait for failed payment\"); }",
+              "else { pm.test(\"order reaches PAYMENT_FAILED within 30 attempts\", function () { pm.expect(order.status).to.eql(\"PAYMENT_FAILED\"); }); pm.execution.setNextRequest(null); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify unchanged balance",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"balance lookup returns 200\", function () { pm.response.to.have.status(200); });",
+              "pm.test(\"failed payment leaves the balance unchanged\", function () { pm.expect(pm.response.json().balance).to.eql(800); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wait for failure notification",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/notifications",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "notifications"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const tries = Number(pm.collectionVariables.get(\"failureNotificationPollAttempts\") || \"0\") + 1;",
+              "pm.collectionVariables.set(\"failureNotificationPollAttempts\", String(tries));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"notifications lookup returns 200\", function () { pm.response.to.have.status(200); });",
+              "const notifications = pm.response.json();",
+              "const found = notifications.find(n => Number(n.orderId) === Number(pm.collectionVariables.get(\"failedOrderId\")) && n.subject === \"Order payment failed\");",
+              "if (found) { pm.test(\"insufficient-balance notification is stored\", function () { pm.expect(found.recipient).to.eql(pm.collectionVariables.get(\"email\")); pm.expect(found.amount).to.eql(2000); pm.expect(found.message).to.include(\"INSUFFICIENT_BALANCE\"); pm.expect(found.message).to.include(\"2000\"); }); pm.execution.setNextRequest(null); }",
+              "else if (Number(pm.collectionVariables.get(\"failureNotificationPollAttempts\")) < 30) { pm.execution.setNextRequest(\"Wait for failure notification\"); }",
+              "else { pm.test(\"failure notification arrives within 30 attempts\", function () { pm.expect(found).to.exist; }); pm.execution.setNextRequest(null); }"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

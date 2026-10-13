@@ -15,3 +15,9 @@ out/
 
 ### Logs
 *.log
+
+### Local secrets
+.env
+.env.*
+!.env.example
+k8s/01-secret.yaml
