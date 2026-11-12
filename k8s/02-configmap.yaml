@@ -2,8 +2,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: user-service-config
+  namespace: m
 data:
-  SERVER_PORT: "8000"
-  DB_HOST: "user-service-postgresql"
+  DB_HOST: user-service-postgresql
+  DB_NAME: users
   DB_PORT: "5432"
-  DB_NAME: "users"
+  SERVER_PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"

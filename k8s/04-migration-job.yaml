@@ -39,6 +39,15 @@ spec:
                 -d "$DB_NAME" \
                 -f /migration/V1__create_users.sql
 
+              PGPASSWORD="$DB_PASSWORD" \
+              psql \
+                -v ON_ERROR_STOP=1 \
+                -h "$DB_HOST" \
+                -p "$DB_PORT" \
+                -U "$DB_USERNAME" \
+                -d "$DB_NAME" \
+                -f /migration/V2__create_outbox.sql
+
               echo '{"level":"INFO","service":"user-service-migration","message":"Database migration completed"}'
           env:
             - name: DB_HOST

@@ -1,0 +1,105 @@
+asyncapi: 2.6.0
+info:
+  title: OTUS Stream Processing events
+  version: 1.0.0
+  description: Kafka contracts used by Event Collaboration between the four services.
+defaultContentType: application/json
+servers:
+  local:
+    url: localhost:9092
+    protocol: kafka
+    description: Local Kafka broker
+  kubernetes:
+    url: kafka:9092
+    protocol: kafka
+    description: Kafka service in namespace m
+channels:
+  users.registered:
+    description: User Service emits after persisting a user.
+    publish:
+      operationId: publishUserRegistered
+      message: {$ref: '#/components/messages/UserRegistered'}
+    subscribe:
+      operationId: createBillingAccount
+      description: Billing Service consumes with group billing-service.
+      message: {$ref: '#/components/messages/UserRegistered'}
+  orders.created:
+    description: Order Service emits after persisting a PENDING order.
+    publish:
+      operationId: publishOrderCreated
+      message: {$ref: '#/components/messages/OrderCreated'}
+    subscribe:
+      operationId: chargeOrder
+      description: Billing Service consumes with group billing-service.
+      message: {$ref: '#/components/messages/OrderCreated'}
+  payments.succeeded:
+    description: Billing Service emits after committing a successful charge.
+    publish:
+      operationId: publishPaymentSucceeded
+      message: {$ref: '#/components/messages/PaymentSucceeded'}
+    subscribe:
+      operationId: applySuccessfulPayment
+      description: Order Service (group order-service) and Notification Service (group notification-service) consume independently.
+      message: {$ref: '#/components/messages/PaymentSucceeded'}
+  payments.failed:
+    description: Billing Service emits after committing a declined charge.
+    publish:
+      operationId: publishPaymentFailed
+      message: {$ref: '#/components/messages/PaymentFailed'}
+    subscribe:
+      operationId: applyFailedPayment
+      description: Order Service (group order-service) and Notification Service (group notification-service) consume independently.
+      message: {$ref: '#/components/messages/PaymentFailed'}
+components:
+  messages:
+    UserRegistered:
+      name: UserRegistered
+      title: A user registered
+      payload:
+        type: object
+        required: [eventId, occurredAt, userId, email]
+        properties:
+          eventId: {type: string, format: uuid}
+          occurredAt: {type: string, format: date-time}
+          userId: {type: integer, format: int64}
+          email: {type: string, format: email}
+    OrderCreated:
+      name: OrderCreated
+      title: An order was created
+      payload:
+        type: object
+        required: [eventId, occurredAt, orderId, userId, email, amount]
+        properties:
+          eventId: {type: string, format: uuid}
+          occurredAt: {type: string, format: date-time}
+          orderId: {type: integer, format: int64}
+          userId: {type: integer, format: int64}
+          email: {type: string, format: email}
+          amount: {type: number, multipleOf: 0.01}
+    PaymentSucceeded:
+      name: PaymentSucceeded
+      title: Order payment succeeded
+      payload:
+        type: object
+        required: [eventId, occurredAt, orderId, userId, email, amount]
+        properties:
+          eventId: {type: string, format: uuid}
+          occurredAt: {type: string, format: date-time}
+          orderId: {type: integer, format: int64}
+          userId: {type: integer, format: int64}
+          email: {type: string, format: email}
+          amount: {type: number, multipleOf: 0.01}
+    PaymentFailed:
+      name: PaymentFailed
+      title: Order payment failed
+      payload:
+        type: object
+        required: [eventId, occurredAt, orderId, userId, email, amount, reason]
+        properties:
+          eventId: {type: string, format: uuid}
+          occurredAt: {type: string, format: date-time}
+          orderId: {type: integer, format: int64}
+          userId: {type: integer, format: int64}
+          email: {type: string, format: email}
+          amount: {type: number, multipleOf: 0.01}
+          reason: {type: string, example: INSUFFICIENT_BALANCE}
