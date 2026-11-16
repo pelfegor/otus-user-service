@@ -28,4 +28,9 @@ public class TransactionRepository {
             .param("accountId", accountId).param("orderId", orderId).param("amount", amount)
             .param("status", succeeded ? "SUCCESS" : "FAILED").update();
     }
+
+    public int markRefunded(long orderId) {
+        return jdbc.sql("UPDATE transactions SET status='REFUNDED' WHERE order_id=:orderId AND type='WITHDRAWAL' AND status='SUCCESS'")
+                .param("orderId", orderId).update();
+    }
 }

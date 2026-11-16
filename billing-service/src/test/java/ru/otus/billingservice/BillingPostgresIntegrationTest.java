@@ -105,6 +105,27 @@ class BillingPostgresIntegrationTest {
         assertThat(account.balance()).isEqualByComparingTo("2.00");
     }
 
+    @Test
+    void refundsSuccessfulChargeOnlyOnceAndKeepsRefundedPaymentIdempotent() {
+        billing.createAccount(7);
+        billing.deposit(7, new BigDecimal("10.00"));
+        assertThat(billing.charge(301, 7, new BigDecimal("4.00")).status()).isEqualTo(PaymentStatus.SUCCESS);
+
+        billing.refund(301, 7);
+        billing.refund(301, 7);
+
+        assertThat(billing.getAccount(7).balance()).isEqualByComparingTo("10.00");
+        assertThat(billing.charge(301, 7, new BigDecimal("4.00")).status()).isEqualTo(PaymentStatus.REFUNDED);
+        assertThat(billing.getAccount(7).balance()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void refundWithoutCommittedChargeIsAnIdempotentNoOp() {
+        billing.createAccount(7);
+        billing.refund(999, 7);
+        assertThat(billing.getAccount(7).balance()).isEqualByComparingTo("0.00");
+    }
+
     private static OrderCreated order(long orderId, long userId, String amount) {
         return new OrderCreated("event-" + orderId, java.time.Instant.now(), orderId, userId,
                 "user@example.com", new BigDecimal(amount));
