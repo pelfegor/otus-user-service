@@ -1,6 +1,12 @@
-# OTUS Microservice Architecture — User Service and Stream Processing
+# OTUS Microservice Architecture
 
-Репозиторий объединяет предыдущую домашнюю работу User Service и завершённую домашнюю работу Stream Processing с Billing, Order и Notification services.
+Репозиторий объединяет три работы: User Service, Stream Processing (Billing, Order и Notification) и Distributed Transactions (Saga для заказа). Ниже приведена навигация по основным разделам:
+
+- [User Service](#функциональность) — аутентификация, профиль, Kubernetes и Postman;
+- [Stream Processing](#stream-processing) — Kafka, сервисы, развёртывание и E2E-сценарий;
+- [Distributed Transactions](#домашнее-задание-распределенная-транзакция-заказа) — Saga, конфигурация, Kubernetes и Newman;
+- [Monitoring](#monitoring) и [централизованное логирование](#централизованное-логирование).
+
 
 Краткая схема выбранной Event Collaboration архитектуры находится в [docs/architecture.md](docs/architecture.md); актуальные HTTP и Kafka IDL — в [OpenAPI](docs/openapi.yaml) и [AsyncAPI](docs/asyncapi.yaml).
 
@@ -1011,7 +1017,15 @@ kubectl get pods,services,ingress -n m
 
 Сценарий проверяет создание Billing-счёта после регистрации, пополнение на 1500, списание 700, остаток 800, положительное уведомление, затем заказ на 2000, неизменный остаток 800 и отрицательное уведомление с причиной `INSUFFICIENT_BALANCE`.
 
-Последний проверенный E2E-прогон (12 октября 2026 года) через NGINX Ingress завершился успешно: **1 итерация, 45 HTTP-запросов, 40 assertions, 0 ошибок, 4,8 секунды**. Число запросов зависит от количества polling-повторов.
+Актуальные результаты проверок:
+
+| Проверка | Результат |
+|---|---|
+| `./gradlew clean test` | 52 теста успешно |
+| Distributed Transactions Newman | 19 assertions, 0 failures |
+| Stream Processing Newman | 39 assertions, 0 failures |
+
+Количество HTTP-запросов Stream Processing меняется в зависимости от числа polling-повторов асинхронных операций.
 
 Прямой запуск коллекции:
 
@@ -1054,6 +1068,82 @@ kubectl logs -n m job/user-service-migration
 - PostgreSQL базы логически разделены в одном PostgreSQL deployment; для этого задания они не вынесены в отдельные кластеры.
 - Notification Service сохраняет email получателя, сумму, тему и текст email-уведомления, а API возвращает эти данные. Фактическая SMTP-отправка в рамках проекта не настроена.
 - Event Collaboration обеспечивает eventual consistency: после POST регистрации/заказа счет и итоговый статус могут появиться позже.
+
+---
+
+# Домашнее задание: распределенная транзакция заказа
+
+## Паттерн
+
+Используется **Saga с оркестрацией**. `OrderService` сохраняет `PENDING` заказ и последовательно вызывает Billing (списание), Inventory (резерв SKU и количества), Delivery (резерв уникального слота). После трех успешных ответов заказ становится `CONFIRMED`. При ошибке сервис до трех раз вызывает компенсирующие операции в обратном порядке и помечает заказ `FAILED`; клиент получает HTTP 409. Если все попытки компенсации завершились ошибкой, заказ получает статус `COMPENSATION_REQUIRED`, а причина возвращается клиенту. Billing списывает деньги идемпотентно по `orderId`, а возврат выполняется один раз.
+
+`POST /orders` сохраняет контракт предыдущей работы: запрос только с `price` создает `PENDING` заказ через outbox и отвечает `202 Accepted`. Для нового синхронного сценария передаются `price`, `sku`, `quantity` и `deliverySlot`; он отвечает `201 Created` после завершения Saga и возвращает `courierId`. Три поля Saga должны передаваться вместе.
+
+Каждый сервис валидирует JWT, переданный клиентом, и использует одинаковый `JWT_SECRET`. Для работы нужны существующие в namespace `m` Postgres, Kafka, User Service и их секреты. Billing, Order, Inventory и Delivery используют отдельные базы `billing`, `orders`, `inventory`, `delivery`. Inventory хранит количество доступного `SKU-001` и резервы в PostgreSQL. Delivery выбирает конкретного курьера из таблицы `couriers`, сохраняет `courierId` и слот; уникальное ограничение не позволяет занять одним курьером два заказа в один слот. Начальная миграция добавляет одного курьера `courier-001`; пул курьеров можно менять в БД через таблицу `couriers`. Шаги Saga сохраняются в `order_saga_steps`; если компенсация не прошла после трех попыток, заказ помечается `COMPENSATION_REQUIRED`. Шаги доступны для диагностики/ручной сверки; автоматического фонового re-drive worker пока нет.
+
+## Установка в Kubernetes
+
+Порты, передаваемые как `HTTP_PORT` при сборке образов:
+
+| Сервис | Порт |
+|---|---:|
+| Billing | 8001 |
+| Order | 8002 |
+| Inventory | 8003 |
+| Delivery | 8004 |
+| Notification | 8003 |
+
+Создать namespace (если его еще нет):
+
+```bash
+kubectl create namespace m --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Собрать образы в Docker daemon Minikube и развернуть Inventory/Delivery (перед этим должен быть установлен базовый стек этого репозитория, в том числе Kafka и сервисы из `k8s/12-stream-services.yaml`). Обновленный DB Job создает также базы `inventory` и `delivery`; если прежняя версия Job уже создана, удалите ее перед повторным применением:
+
+```bash
+eval $(minikube docker-env)
+kubectl delete job stream-processing-databases -n m --ignore-not-found
+kubectl apply -f k8s/13-databases-job.yaml
+kubectl wait --for=condition=complete job/stream-processing-databases -n m --timeout=180s
+for service in order-service billing-service inventory-service delivery-service; do
+  case "$service" in
+    billing-service) port=8001 ;;
+    order-service) port=8002 ;;
+    inventory-service) port=8003 ;;
+    delivery-service) port=8004 ;;
+  esac
+  docker build -t ${service}:distributed-transactions --build-arg SERVICE=${service} --build-arg HTTP_PORT=${port} .
+done
+kubectl apply -f k8s/saga/inventory-delivery.yaml
+kubectl set image deployment/order-service order-service=order-service:distributed-transactions -n m
+kubectl set image deployment/billing-service billing-service=billing-service:distributed-transactions -n m
+kubectl rollout status deployment/order-service -n m
+kubectl rollout status deployment/billing-service -n m
+kubectl rollout status deployment/inventory-service -n m
+kubectl rollout status deployment/delivery-service -n m
+```
+
+Order Service должен получить внутренние адреса сервисов из `k8s/12-stream-services.yaml`; без них приложение использует localhost по умолчанию, что приводит к ошибкам вызовов и компенсации:
+
+```yaml
+BILLING_URL: http://billing-service:8001
+INVENTORY_URL: http://inventory-service:8003
+DELIVERY_URL: http://delivery-service:8004
+```
+
+Проверьте конфигурацию после применения манифестов: `kubectl get deployment order-service -n m -o yaml`. Ingress для `/orders` и `/billing` уже задается `k8s/14-stream-ingress.yaml`; внутренние вызовы Inventory/Delivery идут по Kubernetes Service DNS. Если Ingress еще не установлен, примените штатный для проекта `k8s/07-ingress.yaml` и `k8s/14-stream-ingress.yaml`. Для локального доступа Postman используйте `http://arch.homework` и настройте разрешение домена на адрес Ingress согласно локальной установке Minikube.
+
+## Postman / Newman
+
+Импортировать `postman/distributed-saga.postman_collection.json` и `postman/distributed-saga.postman_environment.json`. Environment задает `baseUrl` значением `http://arch.homework`. Перед регистрацией коллекция генерирует уникальные username и email, поэтому полный Newman запуск можно повторять. Коллекция создает Billing account, пополняет его на 100, проверяет успешную Saga, конфликт Delivery с компенсацией, отказ Billing из-за недостатка средств и отказ Inventory для неизвестного SKU. Для отказов проверяются статус заказа, журнал шагов Saga и баланс; недостаток средств не должен запускать Inventory/Delivery, а сбой Inventory должен вернуть списание. `GET /orders/{id}/saga` доступен только владельцу заказа.
+
+Для запуска набора через Newman:
+
+```bash
+newman run postman/distributed-saga.postman_collection.json \
+  -e postman/distributed-saga.postman_environment.json
+```
 
 ---
 
@@ -1382,3 +1472,4 @@ helm uninstall prometheus -n monitoring
 ```bash
 minikube stop
 ```
+

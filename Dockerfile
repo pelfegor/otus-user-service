@@ -7,11 +7,14 @@ COPY user-service ./user-service
 COPY billing-service ./billing-service
 COPY order-service ./order-service
 COPY notification-service ./notification-service
+COPY inventory-service ./inventory-service
+COPY delivery-service ./delivery-service
 COPY event-contracts ./event-contracts
 COPY service-common ./service-common
 
 RUN chmod +x gradlew && ./gradlew :user-service:bootJar :billing-service:bootJar \
-    :order-service:bootJar :notification-service:bootJar --no-daemon
+    :order-service:bootJar :notification-service:bootJar :inventory-service:bootJar \
+    :delivery-service:bootJar --no-daemon
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
