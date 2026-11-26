@@ -1,0 +1,759 @@
+{
+  "info": {
+    "name": "Distributed transaction saga",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 Register user (run once)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Saga\",\n  \"lastName\": \"Student\",\n  \"email\": \"{{email}}\",\n  \"phone\": \"+79990000000\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);",
+              "pm.environment.set(\"username\", \"saga.\" + runId);",
+              "pm.environment.set(\"email\", \"saga.\" + runId + \"@example.org\");"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"registered\",()=>pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"login succeeded\",()=>pm.response.to.have.status(200));",
+              "pm.environment.set(\"token\",pm.response.json().accessToken);",
+              "pm.environment.set(\"slot\",new Date().toISOString());"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Ensure billing account",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"account ready\",()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 Read balance",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"billing account exists\",()=>pm.response.to.have.status(200));",
+              "pm.environment.set(\"balanceBefore\",pm.response.json().balance);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 Deposit test funds",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me/deposit",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me",
+            "deposit"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 100\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"funded\",()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Create order and reserve all resources",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sku\": \"SKU-001\",\n  \"quantity\": 2,\n  \"deliverySlot\": \"{{slot}}\",\n  \"price\": 10\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order confirmed\",()=>pm.response.to.have.status(201));",
+              "pm.expect(pm.response.json().status).to.eql(\"CONFIRMED\");",
+              "pm.expect(pm.response.json().courierId).to.be.a(\"string\").and.not.empty;",
+              "pm.environment.set(\"orderId\",pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 Repeat slot to force saga compensation",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sku\": \"SKU-001\",\n  \"quantity\": 2,\n  \"deliverySlot\": \"{{slot}}\",\n  \"price\": 10\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"saga failed and reports compensation\",()=>pm.response.to.have.status(409));",
+              "pm.environment.set(\"deliveryFailureOrderId\", pm.response.json().orderId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 Verify failed order refunded",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"balance restored after compensation\",()=>{pm.response.to.have.status(200);pm.expect(pm.response.json().balance).to.eql(Number(pm.environment.get(\"balanceBefore\"))+100-10)});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 Get confirmed order",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{orderId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{orderId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order is confirmed\",()=>{pm.response.to.have.status(200);pm.expect(pm.response.json().status).to.eql(\"CONFIRMED\")});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 Delivery-conflict order is FAILED",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{deliveryFailureOrderId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{deliveryFailureOrderId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order is FAILED\",()=>{pm.response.to.have.status(200);pm.expect(pm.response.json().status).to.eql(\"FAILED\")});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 Delivery conflict compensates every completed step",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{deliveryFailureOrderId}}/saga",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{deliveryFailureOrderId}}",
+            "saga"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"saga step log is available\",()=>pm.response.to.have.status(200));",
+              "const steps = pm.response.json().steps;",
+              "pm.expect(steps.map(s=>s.step).sort()).to.eql([\"BILLING\",\"DELIVERY\",\"INVENTORY\"]);",
+              "pm.expect(steps.every(s=>s.state === \"COMPENSATED\")).to.eql(true);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 Insufficient balance stops before any reservation",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sku\": \"SKU-001\",\n  \"quantity\": 1,\n  \"deliverySlot\": \"billing-failure-slot\",\n  \"price\": 1000\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Saga failure is reported\",()=>pm.response.to.have.status(409));",
+              "pm.environment.set(\"billingFailureOrderId\", pm.response.json().orderId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 Insufficient-payment order is FAILED",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{billingFailureOrderId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{billingFailureOrderId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order is FAILED\",()=>{pm.response.to.have.status(200);pm.expect(pm.response.json().status).to.eql(\"FAILED\")});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 Insufficient balance performs no inventory or delivery step",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{billingFailureOrderId}}/saga",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{billingFailureOrderId}}",
+            "saga"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"saga step log is available\",()=>pm.response.to.have.status(200));",
+              "const steps = pm.response.json().steps;",
+              "pm.expect(steps.map(s=>s.step)).to.eql([\"BILLING\"]);",
+              "pm.expect(steps[0].state).to.eql(\"COMPENSATED\");"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "15 Insufficient balance does not change account balance",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"balance unchanged after failure\",()=>{pm.response.to.have.status(200);pm.expect(pm.response.json().balance).to.eql(Number(pm.environment.get(\"balanceBefore\"))+90)});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "16 Unknown SKU returns stock failure and refunds payment",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sku\": \"SKU-NOT-FOUND\",\n  \"quantity\": 1,\n  \"deliverySlot\": \"stock-failure-slot\",\n  \"price\": 10\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/orders",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Saga failure is reported\",()=>pm.response.to.have.status(409));",
+              "pm.environment.set(\"stockFailureOrderId\", pm.response.json().orderId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "17 Stock-failure order is FAILED",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{stockFailureOrderId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{stockFailureOrderId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"order is FAILED\",()=>{pm.response.to.have.status(200);pm.expect(pm.response.json().status).to.eql(\"FAILED\")});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "18 Stock failure compensates payment and creates no delivery reservation",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/orders/{{stockFailureOrderId}}/saga",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "orders",
+            "{{stockFailureOrderId}}",
+            "saga"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"saga step log is available\",()=>pm.response.to.have.status(200));",
+              "const steps = pm.response.json().steps;",
+              "pm.expect(steps.map(s=>s.step).sort()).to.eql([\"BILLING\",\"INVENTORY\"]);",
+              "pm.expect(steps.every(s=>s.state === \"COMPENSATED\")).to.eql(true);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "19 Stock failure refunds the charge",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/billing/accounts/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "billing",
+            "accounts",
+            "me"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"balance unchanged after failure\",()=>{pm.response.to.have.status(200);pm.expect(pm.response.json().balance).to.eql(Number(pm.environment.get(\"balanceBefore\"))+90)});"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://arch.homework"
+    }
+  ]
+}

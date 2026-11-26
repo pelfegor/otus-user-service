@@ -34,3 +34,7 @@ management:
 security:
   jwt:
     secret: ${JWT_SECRET}
+saga:
+  billing-url: ${BILLING_URL:http://localhost:8001}
+  inventory-url: ${INVENTORY_URL:http://localhost:8003}
+  delivery-url: ${DELIVERY_URL:http://localhost:8004}

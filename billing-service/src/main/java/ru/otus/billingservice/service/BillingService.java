@@ -52,14 +52,28 @@ public class BillingService {
 
     @Transactional
     public PaymentResult charge(long orderId, long userId, BigDecimal amount) {
-        return charge(orderId, userId, null, amount);
+        return charge(orderId, userId, null, amount, false);
+    }
+
+    @Transactional
+    public void refund(long orderId, long userId) {
+        // Persist the cancellation even when there is no ledger row yet. The order lock
+        // makes a concurrent charge wait, and a later charge will observe this tombstone.
+        transactions.lockOrder(orderId, userId);
+        transactions.markCancelled(orderId);
+        var payment = transactions.findByOrderId(orderId);
+        if (payment.isEmpty()) return;
+        TransactionEntity tx = payment.get();
+        AccountEntity account = accounts.lockByUserId(userId).orElseThrow(() -> new AccountNotFoundException(userId));
+        if (!Objects.equals(tx.accountId(), account.id())) throw new IllegalArgumentException("payment owner mismatch");
+        if (transactions.markRefunded(orderId) == 1) accounts.deposit(account.id(), tx.amount());
     }
 
     @Transactional
     public PaymentResult processOrder(OrderCreated order) {
         Objects.requireNonNull(order, "order");
         if (order.orderId() == null || order.userId() == null) throw new IllegalArgumentException("IDs must be present");
-        return charge(order.orderId(), order.userId(), order.email(), order.amount());
+        return charge(order.orderId(), order.userId(), order.email(), order.amount(), true);
     }
 
     @Transactional
@@ -75,9 +89,10 @@ public class BillingService {
                         order.amount(), "ACCOUNT_NOT_FOUND"));
     }
 
-    private PaymentResult charge(long orderId, long userId, String email, BigDecimal amount) {
+    private PaymentResult charge(long orderId, long userId, String email, BigDecimal amount, boolean publishEvents) {
         if (orderId <= 0 || userId <= 0) throw new IllegalArgumentException("IDs must be positive");
         validateAmount(amount);
+        boolean cancelled = transactions.lockOrder(orderId, userId);
         // Serializes concurrent orders for the same account.
         AccountEntity account = accounts.lockByUserId(userId)
             .orElseThrow(() -> new AccountNotFoundException(userId));
@@ -87,9 +102,26 @@ public class BillingService {
             if (!Objects.equals(tx.accountId(), account.id()) || tx.amount().compareTo(amount) != 0) {
                 throw new IllegalStateException("orderId already used with different payment data");
             }
-            return new PaymentResult(orderId, userId, email, amount,
-                PaymentStatus.valueOf(tx.status()), true,
-                "FAILED".equals(tx.status()) ? "INSUFFICIENT_BALANCE" : null);
+            PaymentStatus previousStatus = PaymentStatus.valueOf(tx.status());
+            return new PaymentResult(orderId, userId, email, amount, previousStatus, true,
+                switch (previousStatus) {
+                    case FAILED -> "INSUFFICIENT_BALANCE";
+                    case REFUNDED -> "PAYMENT_REFUNDED";
+                    case SUCCESS -> null;
+                });
+        }
+        // A committed transaction takes precedence over the cancellation tombstone:
+        // after a successful refund, retries must keep returning REFUNDED. The tombstone
+        // blocks only a debit that has not yet been recorded.
+        if (cancelled) {
+            PaymentResult result = new PaymentResult(orderId, userId, email, amount,
+                    PaymentStatus.FAILED, true, "PAYMENT_CANCELLED");
+            if (publishEvents) {
+                String eventId = UUID.randomUUID().toString();
+                outbox.enqueue("payments.failed", Long.toString(orderId),
+                        new PaymentFailed(eventId, Instant.now(), orderId, userId, email, amount, result.reason()));
+            }
+            return result;
         }
         boolean succeeded = accounts.withdrawIfEnough(account.id(), amount) == 1;
         try {
@@ -102,13 +134,15 @@ public class BillingService {
         String reason = succeeded ? null : "INSUFFICIENT_BALANCE";
         PaymentResult result = new PaymentResult(orderId, userId, email, amount,
                 succeeded ? PaymentStatus.SUCCESS : PaymentStatus.FAILED, false, reason);
-        String eventId = UUID.randomUUID().toString();
-        if (succeeded) {
-            outbox.enqueue("payments.succeeded", Long.toString(orderId),
-                    new PaymentSucceeded(eventId, Instant.now(), orderId, userId, email, amount));
-        } else {
-            outbox.enqueue("payments.failed", Long.toString(orderId),
-                    new PaymentFailed(eventId, Instant.now(), orderId, userId, email, amount, reason));
+        if (publishEvents) {
+            String eventId = UUID.randomUUID().toString();
+            if (succeeded) {
+                outbox.enqueue("payments.succeeded", Long.toString(orderId),
+                        new PaymentSucceeded(eventId, Instant.now(), orderId, userId, email, amount));
+            } else {
+                outbox.enqueue("payments.failed", Long.toString(orderId),
+                        new PaymentFailed(eventId, Instant.now(), orderId, userId, email, amount, reason));
+            }
         }
         return result;
     }

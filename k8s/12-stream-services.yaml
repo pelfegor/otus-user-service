@@ -46,7 +46,7 @@ spec:
     spec:
       containers:
         - name: billing-service
-          image: billing-service:stream-processing
+          image: billing-service:distributed-transactions
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -76,7 +76,7 @@ spec:
               port: http
             periodSeconds: 5
             timeoutSeconds: 3
-            failureThreshold: 36
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -122,7 +122,7 @@ spec:
     spec:
       containers:
         - name: order-service
-          image: order-service:stream-processing
+          image: order-service:distributed-transactions
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -146,13 +146,19 @@ spec:
                 secretKeyRef:
                   name: user-service-jwt-secret
                   key: JWT_SECRET
+            - name: BILLING_URL
+              value: http://billing-service:8001
+            - name: INVENTORY_URL
+              value: http://inventory-service:8003
+            - name: DELIVERY_URL
+              value: http://delivery-service:8004
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
               port: http
             periodSeconds: 5
             timeoutSeconds: 3
-            failureThreshold: 36
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -198,7 +204,7 @@ spec:
     spec:
       containers:
         - name: notification-service
-          image: notification-service:stream-processing
+          image: notification-service:distributed-transactions
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -228,7 +234,7 @@ spec:
               port: http
             periodSeconds: 5
             timeoutSeconds: 3
-            failureThreshold: 36
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness

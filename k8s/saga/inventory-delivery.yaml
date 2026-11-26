@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+  namespace: m
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: inventory-service}
+  template:
+    metadata:
+      labels: {app: inventory-service}
+    spec:
+      containers:
+        - name: inventory-service
+          image: inventory-service:distributed-transactions
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8003}]
+          env:
+            - {name: SERVER_PORT, value: "8003"}
+            - {name: DB_URL, value: "jdbc:postgresql://user-service-postgresql:5432/inventory"}
+            - {name: DB_USERNAME, valueFrom: {secretKeyRef: {name: user-service-db-secret, key: DB_USERNAME}}}
+            - {name: DB_PASSWORD, valueFrom: {secretKeyRef: {name: user-service-db-secret, key: DB_PASSWORD}}}
+            - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: user-service-jwt-secret, key: JWT_SECRET}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service
+  namespace: m
+spec:
+  selector: {app: inventory-service}
+  ports: [{port: 8003, targetPort: 8003}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delivery-service
+  namespace: m
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: delivery-service}
+  template:
+    metadata:
+      labels: {app: delivery-service}
+    spec:
+      containers:
+        - name: delivery-service
+          image: delivery-service:distributed-transactions
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8004}]
+          env:
+            - {name: SERVER_PORT, value: "8004"}
+            - {name: DB_URL, value: "jdbc:postgresql://user-service-postgresql:5432/delivery"}
+            - {name: DB_USERNAME, valueFrom: {secretKeyRef: {name: user-service-db-secret, key: DB_USERNAME}}}
+            - {name: DB_PASSWORD, valueFrom: {secretKeyRef: {name: user-service-db-secret, key: DB_PASSWORD}}}
+            - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: user-service-jwt-secret, key: JWT_SECRET}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delivery-service
+  namespace: m
+spec:
+  selector: {app: delivery-service}
+  ports: [{port: 8004, targetPort: 8004}]

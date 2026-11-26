@@ -10,6 +10,11 @@ import ru.otus.orderservice.service.OrderNotFoundException;
 
 @RestControllerAdvice
 public class OrderExceptionHandler {
+    @ExceptionHandler(ru.otus.orderservice.service.SagaFailedException.class)
+    ResponseEntity<Map<String, Object>> sagaFailed(ru.otus.orderservice.service.SagaFailedException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "orderId", exception.orderId(), "error", exception.getMessage()));
+    }
     @ExceptionHandler(OrderNotFoundException.class)
     ResponseEntity<Map<String, String>> notFound(OrderNotFoundException exception) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", exception.getMessage()));
